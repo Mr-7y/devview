@@ -6,6 +6,20 @@
 
 ![DevView](screenshot-code.png)
 
+[![Build](https://github.com/Mr-7y/devview/actions/workflows/build.yml/badge.svg)](https://github.com/Mr-7y/devview/actions/workflows/build.yml)
+
+## 下载
+
+不用装 Rust，不用编译，直接下现成的：
+
+| 系统 | 包 | 用法 |
+|---|---|---|
+| Windows | [DevView-v1.1.0-windows-x64.zip](https://github.com/Mr-7y/devview/releases/latest) | 解压双击 `DevView.exe`，3.0 MB，无需运行库 |
+| macOS | [DevView-v1.1.0-macos-universal.zip](https://github.com/Mr-7y/devview/releases/latest) | 解压得到 `DevView.app`，Intel / Apple Silicon 通用 |
+| Linux | [DevView-v1.1.0-linux-x64.tar.gz](https://github.com/Mr-7y/devview/releases/latest) | `tar -xzf` 后 `./devview` |
+
+三个包都由 GitHub Actions 在各自原生机器上编译（Windows Server、macOS、Ubuntu 22.04），不是交叉编译产物。
+
 ## 三个版本，这次是第三种
 
 | | 依赖 | 二进制 | 内存 | 启动 |

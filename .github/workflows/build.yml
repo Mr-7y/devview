@@ -1,0 +1,154 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ---------------------------------------------------------------- Windows
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: 缓存依赖
+        uses: Swatinem/rust-cache@v2
+
+      - name: 编译
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: 整理产物
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\devview.exe dist\DevView.exe
+          Copy-Item README.md dist\README.md
+          Compress-Archive -Path dist\* -DestinationPath DevView-${{ github.ref_name }}-windows-x64.zip -Force
+          $f = Get-Item dist\DevView.exe
+          "体积: {0:N2} MB" -f ($f.Length / 1MB)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DevView-windows-x64
+          path: DevView-*-windows-x64.zip
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ Linux
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libxkbcommon-dev libgl1-mesa-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存依赖
+        uses: Swatinem/rust-cache@v2
+
+      - name: 编译
+        run: cargo build --release --locked
+
+      - name: 整理产物
+        run: |
+          mkdir -p dist
+          cp target/release/devview dist/devview
+          cp README.md dist/README.md
+          chmod +x dist/devview
+          tar -czf "DevView-${GITHUB_REF_NAME}-linux-x64.tar.gz" -C dist .
+          ls -lh dist/devview
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DevView-linux-x64
+          path: DevView-*-linux-x64.tar.gz
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ macOS
+  macos:
+    name: macOS Universal
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: 缓存依赖
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: universal
+
+      - name: 编译双架构
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          lipo -create \
+            target/aarch64-apple-darwin/release/devview \
+            target/x86_64-apple-darwin/release/devview \
+            -output devview-universal
+          chmod +x devview-universal
+          file devview-universal
+
+      - name: 组装 .app
+        run: |
+          set -euo pipefail
+          APP="dist/DevView.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp devview-universal "$APP/Contents/MacOS/DevView"
+          cp icons/icon.icns "$APP/Contents/Resources/icon.icns"
+          cp packaging/Info.plist "$APP/Contents/Info.plist"
+          plutil -lint "$APP/Contents/Info.plist"
+          codesign --force --deep --sign - "$APP"
+          ditto -c -k --keepParent "$APP" "DevView-${GITHUB_REF_NAME}-macos-universal.zip"
+          du -sh "$APP"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DevView-macos-universal
+          path: DevView-*-macos-universal.zip
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- Release
+  release:
+    name: 发布 Release
+    needs: [windows, linux, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          generate_release_notes: true
+          draft: false

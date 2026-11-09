@@ -1,4 +1,4 @@
-// DevView — 极简代码浏览器（纯原生渲染，无 WebView）
+// Ai-View — 极简代码浏览器（纯原生渲染，无 WebView）
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
@@ -23,7 +23,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1360.0, 860.0])
             .with_min_inner_size([760.0, 460.0])
-            .with_title("DevView")
+            .with_title("Ai-View")
             .with_icon(egui::IconData {
                 rgba: include_bytes!("icon.rgba").to_vec(),
                 width: 64,
@@ -34,7 +34,7 @@ fn main() -> eframe::Result<()> {
     opts.renderer = eframe::Renderer::Glow;
 
     eframe::run_native(
-        "DevView",
+        "Ai-View",
         opts,
         Box::new(move |cc| {
             theme::setup(&cc.egui_ctx);

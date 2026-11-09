@@ -38,16 +38,16 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target\x86_64-pc-windows-msvc\release\devview.exe dist\DevView.exe
+          Copy-Item target\x86_64-pc-windows-msvc\release\ai-view.exe dist\Ai-View.exe
           Copy-Item README.md dist\README.md
-          Compress-Archive -Path dist\* -DestinationPath DevView-${{ github.ref_name }}-windows-x64.zip -Force
-          $f = Get-Item dist\DevView.exe
+          Compress-Archive -Path dist\* -DestinationPath Ai-View-${{ github.ref_name }}-windows-x64.zip -Force
+          $f = Get-Item dist\Ai-View.exe
           "体积: {0:N2} MB" -f ($f.Length / 1MB)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DevView-windows-x64
-          path: DevView-*-windows-x64.zip
+          name: Ai-View-windows-x64
+          path: Ai-View-*-windows-x64.zip
           if-no-files-found: error
 
   # ------------------------------------------------------------------ Linux
@@ -76,16 +76,16 @@ jobs:
       - name: 整理产物
         run: |
           mkdir -p dist
-          cp target/release/devview dist/devview
+          cp target/release/ai-view dist/ai-view
           cp README.md dist/README.md
-          chmod +x dist/devview
-          tar -czf "DevView-${GITHUB_REF_NAME}-linux-x64.tar.gz" -C dist .
-          ls -lh dist/devview
+          chmod +x dist/ai-view
+          tar -czf "Ai-View-${GITHUB_REF_NAME}-linux-x64.tar.gz" -C dist .
+          ls -lh dist/ai-view
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DevView-linux-x64
-          path: DevView-*-linux-x64.tar.gz
+          name: Ai-View-linux-x64
+          path: Ai-View-*-linux-x64.tar.gz
           if-no-files-found: error
 
   # ------------------------------------------------------------------ macOS
@@ -110,29 +110,29 @@ jobs:
           cargo build --release --locked --target aarch64-apple-darwin
           cargo build --release --locked --target x86_64-apple-darwin
           lipo -create \
-            target/aarch64-apple-darwin/release/devview \
-            target/x86_64-apple-darwin/release/devview \
-            -output devview-universal
-          chmod +x devview-universal
-          file devview-universal
+            target/aarch64-apple-darwin/release/ai-view \
+            target/x86_64-apple-darwin/release/ai-view \
+            -output ai-view-universal
+          chmod +x ai-view-universal
+          file ai-view-universal
 
       - name: 组装 .app
         run: |
           set -euo pipefail
-          APP="dist/DevView.app"
+          APP="dist/Ai-View.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-          cp devview-universal "$APP/Contents/MacOS/DevView"
+          cp ai-view-universal "$APP/Contents/MacOS/Ai-View"
           cp icons/icon.icns "$APP/Contents/Resources/icon.icns"
           cp packaging/Info.plist "$APP/Contents/Info.plist"
           plutil -lint "$APP/Contents/Info.plist"
           codesign --force --deep --sign - "$APP"
-          ditto -c -k --keepParent "$APP" "DevView-${GITHUB_REF_NAME}-macos-universal.zip"
+          ditto -c -k --keepParent "$APP" "Ai-View-${GITHUB_REF_NAME}-macos-universal.zip"
           du -sh "$APP"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DevView-macos-universal
-          path: DevView-*-macos-universal.zip
+          name: Ai-View-macos-universal
+          path: Ai-View-*-macos-universal.zip
           if-no-files-found: error
 
   # ---------------------------------------------------------------- Release

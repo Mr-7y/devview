@@ -20,7 +20,7 @@ pub struct Conf {
 pub fn conf_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".devview")
+        .join(".ai-view")
         .join("projects.json")
 }
 

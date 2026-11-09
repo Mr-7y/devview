@@ -1,4 +1,4 @@
-# DevView
+# Ai-View
 
 极简代码浏览器 —— 纯原生渲染，没有 WebView、没有 Electron、没有 Python 运行时。
 
@@ -6,7 +6,7 @@
 
 夜航 / 日纸双主题，左右侧栏可独立收合；代码只读，Markdown 可编辑并保存。
 
-[![Build](https://github.com/Mr-7y/devview/actions/workflows/build.yml/badge.svg)](https://github.com/Mr-7y/devview/actions/workflows/build.yml)
+[![Build](https://github.com/Mr-7y/ai-view/actions/workflows/build.yml/badge.svg)](https://github.com/Mr-7y/ai-view/actions/workflows/build.yml)
 
 ## 下载
 
@@ -14,9 +14,9 @@
 
 | 系统 | 包 | 用法 |
 |---|---|---|
-| Windows | [DevView-v1.2.0-windows-x64.zip](https://github.com/Mr-7y/devview/releases/latest) | 解压双击 `DevView.exe`，约 4.7 MB，无需运行库 |
-| macOS | [DevView-v1.2.0-macos-universal.zip](https://github.com/Mr-7y/devview/releases/latest) | 解压得到 `DevView.app`，Intel / Apple Silicon 通用 |
-| Linux | [DevView-v1.2.0-linux-x64.tar.gz](https://github.com/Mr-7y/devview/releases/latest) | `tar -xzf` 后 `./devview` |
+| Windows | [Ai-View-v1.3.0-windows-x64.zip](https://github.com/Mr-7y/ai-view/releases/latest) | 解压双击 `Ai-View.exe`，约 4.7 MB，无需运行库 |
+| macOS | [Ai-View-v1.3.0-macos-universal.zip](https://github.com/Mr-7y/ai-view/releases/latest) | 解压得到 `Ai-View.app`，Intel / Apple Silicon 通用 |
+| Linux | [Ai-View-v1.3.0-linux-x64.tar.gz](https://github.com/Mr-7y/ai-view/releases/latest) | `tar -xzf` 后 `./ai-view` |
 
 三个包都由 GitHub Actions 在各自原生机器上编译（Windows Server、macOS、Ubuntu 22.04），不是交叉编译产物。
 
@@ -50,11 +50,11 @@
 ## 运行
 
 ```bash
-./devview                              # 空启动，界面里点 ＋ 选目录
-./devview ~/code/project-a ~/code/b    # 直接带目录启动（可多个）
+./ai-view                              # 空启动，界面里点 ＋ 选目录
+./ai-view ~/code/project-a ~/code/b    # 直接带目录启动（可多个）
 ```
 
-Windows 双击 `devview.exe` 即可，不会弹黑色控制台窗口。
+Windows 双击 `ai-view.exe` 即可，不会弹黑色控制台窗口。
 
 ## 功能
 
@@ -105,14 +105,14 @@ Windows 双击 `devview.exe` 即可，不会弹黑色控制台窗口。
 cargo build --release
 ```
 
-产物：`target\release\devview.exe`（约 4.7 MB）
+产物：`target\release\ai-view.exe`（约 4.7 MB）
 
 **发给别人只需要这一个 exe**，不用装 .NET、不用装 WebView2、不用装 Python。首次编译约 2~4 分钟，之后改代码增量 20 秒左右。
 
 想再小一点（可选，会略微提升杀软误报率）：
 
 ```powershell
-upx --best --lzma target\release\devview.exe   # 4.7 MB → 约 1.8 MB
+upx --best --lzma target\release\ai-view.exe   # 4.7 MB → 约 1.8 MB
 ```
 
 ### macOS → .app
@@ -123,12 +123,12 @@ upx --best --lzma target\release\devview.exe   # 4.7 MB → 约 1.8 MB
 ./pack-macos.sh
 ```
 
-产物：`dist/DevView.app`，双击即可；拖进「应用程序」就完成安装。脚本会自动做 ad-hoc 签名，第一次打开若提示未验证，右键 →「打开」。
+产物：`dist/Ai-View.app`，双击即可；拖进「应用程序」就完成安装。脚本会自动做 ad-hoc 签名，第一次打开若提示未验证，右键 →「打开」。
 
 要分发给别人又不触发出门拦截，需要 Apple 开发者证书：
 
 ```bash
-codesign --deep --force --sign "Developer ID Application: 你的名字 (TEAMID)" dist/DevView.app
+codesign --deep --force --sign "Developer ID Application: 你的名字 (TEAMID)" dist/Ai-View.app
 xcrun notarytool submit ... # 公证
 ```
 
@@ -138,7 +138,7 @@ xcrun notarytool submit ... # 公证
 ./build.sh          # 等价于 cargo build --release
 ```
 
-产物 `target/release/devview`，直接运行。依赖系统里的 `libxkbcommon`、`libgl`（桌面发行版都自带）。
+产物 `target/release/ai-view`，直接运行。依赖系统里的 `libxkbcommon`、`libgl`（桌面发行版都自带）。
 
 打成 AppImage 需要额外装 `linuxdeploy`，本项目没有内置。
 
@@ -154,7 +154,7 @@ src/theme.rs          # 配色、字体加载、egui 样式
 src/tree.rs           # 懒加载目录树
 src/fsops.rs          # 读目录 / 读文件 / 语言识别 / 自然排序
 src/gitops.rs         # git status / diff，带超时和缓存
-src/conf.rs           # ~/.devview/projects.json
+src/conf.rs           # ~/.ai-view/projects.json
 ```
 
 体积能压到 4.7 MB 的几个关键设置：

@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-DevView 是一个极简的代码浏览器：打开本地目录 → 树形浏览 → 语法高亮 → Markdown 预览 → git 变更标记 → 单文件 diff。代码只读，Markdown 可编辑；夜航 / 日纸双主题，左右侧栏可独立收合。
+Ai-View 是一个极简的代码浏览器：打开本地目录 → 树形浏览 → 语法高亮 → Markdown 预览 → git 变更标记 → 单文件 diff。代码只读，Markdown 可编辑；夜航 / 日纸双主题，左右侧栏可独立收合。
 
 技术形态是**纯 Rust + egui**，没有 WebView、没有 Electron、没有 Python 运行时，release 单文件约 4.6 MB。目标场景是"看代码"而不是编辑代码，因此所有设计都围绕启动快、体积小、内存低展开。
 
@@ -15,7 +15,7 @@ DevView 是一个极简的代码浏览器：打开本地目录 → 树形浏览 
 ```bash
 cargo build                 # 调试构建
 cargo run                   # 运行（可带目录参数：cargo run -- ~/code/a ~/code/b）
-cargo build --release       # 发布构建，产物 target/release/devview(.exe)
+cargo build --release       # 发布构建，产物 target/release/ai-view(.exe)
 cargo fmt --check           # 格式检查
 cargo clippy -- -D warnings # 静态检查
 ```
@@ -24,7 +24,7 @@ cargo clippy -- -D warnings # 静态检查
 
 ```bash
 ./build.sh                  # Linux，等价于 cargo build --release
-./pack-macos.sh             # macOS，生成 dist/DevView.app，带 ad-hoc 签名
+./pack-macos.sh             # macOS，生成 dist/Ai-View.app，带 ad-hoc 签名
 ./build-windows.ps1         # Windows PowerShell 一键打包，打印 exe 体积
 ```
 
@@ -44,7 +44,7 @@ CI 只执行构建，不跑 fmt/clippy。代码库没有 rustfmt 配置，且存
 | `src/fsops.rs` | 路径安全校验、目录/文件读取、语言识别、自然排序、全量文件名索引 |
 | `src/gitops.rs` | 子进程调用 git status/diff，带超时与 3 秒缓存 |
 | `src/syntax.rs` | 手写词法高亮，输出 `Vec<Line>`（每行若干 (类型, 文本) span） |
-| `src/conf.rs` | `~/.devview/projects.json` 的读写与项目增删 |
+| `src/conf.rs` | `~/.ai-view/projects.json` 的读写与项目增删 |
 
 数据流是单线程、无消息通道的：`App::update` 依次调用 `statusbar → topbar → sidebar → center → overlays`，各视图直接读写 `App` 字段。没有后台线程、没有 async runtime、没有事件总线，新增功能请沿用这个模型。
 

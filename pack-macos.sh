@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# DevView — macOS 打包成 .app
+# Ai-View — macOS 打包成 .app
 set -euo pipefail
 cd "$(dirname "$0")"
 
 cargo build --release
 
-APP="dist/DevView.app"
+APP="dist/Ai-View.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-cp target/release/devview "$APP/Contents/MacOS/DevView"
-chmod +x "$APP/Contents/MacOS/DevView"
+cp target/release/ai-view "$APP/Contents/MacOS/Ai-View"
+chmod +x "$APP/Contents/MacOS/Ai-View"
 
 if [ -f icons/icon.icns ]; then
   cp icons/icon.icns "$APP/Contents/Resources/icon.icns"
@@ -21,13 +21,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>DevView</string>
-    <key>CFBundleDisplayName</key><string>DevView</string>
-    <key>CFBundleIdentifier</key><string>com.devview.app</string>
-    <key>CFBundleVersion</key><string>1.2.0</string>
-    <key>CFBundleShortVersionString</key><string>1.2.0</string>
+    <key>CFBundleName</key><string>Ai-View</string>
+    <key>CFBundleDisplayName</key><string>Ai-View</string>
+    <key>CFBundleIdentifier</key><string>com.ai-view.app</string>
+    <key>CFBundleVersion</key><string>1.3.0</string>
+    <key>CFBundleShortVersionString</key><string>1.3.0</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleExecutable</key><string>DevView</string>
+    <key>CFBundleExecutable</key><string>Ai-View</string>
     <key>CFBundleIconFile</key><string>icon.icns</string>
     <key>LSMinimumSystemVersion</key><string>10.15</string>
     <key>NSHighResolutionCapable</key><true/>

@@ -18,7 +18,7 @@ pub fn take(ctx: &egui::Context) -> Option<(PathBuf, (usize, usize))> {
             _ => None,
         })
     })?;
-    let path = std::env::temp_dir().join("devview-shot.png");
+    let path = std::env::temp_dir().join("ai-view-shot.png");
     save_png(&path, &img).ok()?;
     Some((path, (img.size[0], img.size[1])))
 }

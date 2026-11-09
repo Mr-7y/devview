@@ -140,7 +140,7 @@ impl App {
             toast: String::new(),
             toast_at: Instant::now(),
             dragging: false,
-            title: "DevView".into(),
+            title: "Ai-View".into(),
             title_dirty: false,
         };
         app.load_project();
@@ -281,7 +281,7 @@ impl App {
                 self.diff_mode = false;
                 self.scroll_y = 0.0;
                 self.rev += 1;
-                self.title = format!("{} — DevView", name);
+                self.title = format!("{} — Ai-View", name);
                 self.title_dirty = true;
             }
             Err(e) => self.toast(e),
@@ -324,7 +324,7 @@ impl App {
         self.diff_mode = true;
         self.scroll_y = 0.0;
         self.rev += 1;
-        self.title = format!("{} (已删除) — DevView", name);
+        self.title = format!("{} (已删除) — Ai-View", name);
         self.title_dirty = true;
     }
 
@@ -446,13 +446,13 @@ impl App {
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                         avatar(ui);
                         ui.add_space(2.0);
-                        if icon_btn(ui, "⚙", false).on_hover_text("设置").clicked() {
+                        if icon_btn(ui, "设", false).on_hover_text("设置").clicked() {
                             self.right_open = true;
                             self.rtab = 0;
                         }
                         ui.add_space(2.0);
                         let night = !theme::light();
-                        if icon_btn(ui, if night { "☾" } else { "☀" }, false)
+                        if icon_btn(ui, if night { "夜" } else { "日" }, false)
                             .on_hover_text(if night { "切到日纸" } else { "切到夜航" })
                             .clicked()
                         {
@@ -463,7 +463,7 @@ impl App {
                         ui.add_space(8.0);
                         sync_chip(ui, self.git_at.elapsed(), self.git.is_git);
                         ui.add_space(6.0);
-                        if icon_btn(ui, "▣", self.left_open && self.right_open)
+                        if icon_btn(ui, "合", self.left_open && self.right_open)
                             .on_hover_text("两侧栏一起收起 / 展开")
                             .clicked()
                         {
@@ -471,13 +471,13 @@ impl App {
                             self.left_open = !both;
                             self.right_open = !both;
                         }
-                        if icon_btn(ui, if self.right_open { "◨" } else { "◧" }, self.right_open)
+                        if icon_btn(ui, "右", self.right_open)
                             .on_hover_text("右栏")
                             .clicked()
                         {
                             self.right_open = !self.right_open;
                         }
-                        if icon_btn(ui, if self.left_open { "◧" } else { "◨" }, self.left_open)
+                        if icon_btn(ui, "左", self.left_open)
                             .on_hover_text("左栏")
                             .clicked()
                         {
@@ -945,20 +945,20 @@ impl App {
                     let nx = x + 12.0;
                     if row.dir {
                         p.rect_filled(
-                            egui::Rect::from_min_size(egui::pos2(nx, mid - 6.0), Vec2::new(11.0, 8.0)),
+                            egui::Rect::from_min_size(egui::pos2(nx, mid - 4.5), Vec2::new(10.0, 7.0)),
                             1.5,
-                            theme::faint(),
+                            theme::brass().gamma_multiply(0.65),
                         );
                         p.rect_filled(
-                            egui::Rect::from_min_size(egui::pos2(nx, mid - 8.0), Vec2::new(5.5, 3.0)),
+                            egui::Rect::from_min_size(egui::pos2(nx, mid - 6.0), Vec2::new(4.5, 2.5)),
                             1.0,
-                            theme::faint(),
+                            theme::brass().gamma_multiply(0.65),
                         );
                     } else {
-                        p.rect_stroke(
-                            egui::Rect::from_min_size(egui::pos2(nx, mid - 5.5), Vec2::new(9.0, 11.0)),
-                            1.5,
-                            Stroke::new(1.0, theme::faint()),
+                        p.rect_filled(
+                            egui::Rect::from_min_size(egui::pos2(nx + 3.0, mid - 5.0), Vec2::new(2.0, 10.0)),
+                            1.0,
+                            theme::muted().gamma_multiply(0.8),
                         );
                     }
                     p.text(
@@ -1373,7 +1373,7 @@ impl App {
             ui.add_space(14.0);
             ui.vertical(|ui| {
                 ui.label(
-                    RichText::new(format!("DevView {}", env!("CARGO_PKG_VERSION")))
+                    RichText::new(format!("Ai-View {}", env!("CARGO_PKG_VERSION")))
                         .size(10.5)
                         .color(theme::muted()),
                 );
@@ -1401,7 +1401,7 @@ impl App {
                 return;
             }
             if self.cur.is_none() {
-                self.welcome(ui, "DevView", "从左侧选择一个文件开始阅读。");
+                self.welcome(ui, "Ai-View", "从左侧选择一个文件开始阅读。");
                 return;
             }
             self.tabs_bar(ui);
@@ -2166,7 +2166,7 @@ fn brand(ui: &mut egui::Ui) {
     let mut job = LayoutJob::default();
     let f = FontId::proportional(14.5);
     job.append(
-        "Dev",
+        "Ai",
         0.0,
         TextFormat {
             font_id: f.clone(),
@@ -2175,7 +2175,7 @@ fn brand(ui: &mut egui::Ui) {
         },
     );
     job.append(
-        "View",
+        "-View",
         0.0,
         TextFormat {
             font_id: f,
@@ -2553,7 +2553,7 @@ fn fake_select(ui: &mut egui::Ui, text: &str) {
         ui.painter().text(
             egui::pos2(rect.right() - 10.0, rect.center().y),
             Align2::RIGHT_CENTER,
-            "▾",
+            "v",
             FontId::proportional(9.0),
             theme::faint(),
         );

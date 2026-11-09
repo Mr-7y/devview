@@ -20,6 +20,8 @@
 
 三个包都由 GitHub Actions 在各自原生机器上编译（Windows Server、macOS、Ubuntu 22.04），不是交叉编译产物。
 
+Windows 包内含 `install.ps1`：右键「使用 PowerShell 运行」即可安装到用户目录，并创建开始菜单与桌面快捷方式；也可以直接运行 `Ai-View.exe` 免安装使用。
+
 ## 三个版本，这次是第三种
 
 | | 依赖 | 二进制 | 内存 | 启动 |

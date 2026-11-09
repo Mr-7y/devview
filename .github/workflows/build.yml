@@ -39,6 +39,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target\x86_64-pc-windows-msvc\release\ai-view.exe dist\Ai-View.exe
+          Copy-Item installer/install.ps1 dist/install.ps1
           Copy-Item README.md dist\README.md
           Compress-Archive -Path dist\* -DestinationPath Ai-View-${{ github.ref_name }}-windows-x64.zip -Force
           $f = Get-Item dist\Ai-View.exe

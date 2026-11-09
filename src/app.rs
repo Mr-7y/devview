@@ -51,6 +51,7 @@ pub struct Cur {
     preview: bool,
     dirty: bool,
     blocks: Vec<md::Block>,
+    is_img: bool,
 }
 
 struct GalleyCache {
@@ -61,6 +62,8 @@ struct GalleyCache {
 
 pub struct App {
     filter: String,
+    ctx: egui::Context,
+    img: Option<(String, egui::TextureHandle)>,
     conf: conf::Conf,
     root: Option<PathBuf>,
     root_err: Option<String>,
@@ -113,6 +116,8 @@ impl App {
         let _ = cc;
         let mut app = App {
             filter: String::new(),
+            ctx: cc.egui_ctx.clone(),
+            img: None,
             conf,
             root: None,
             root_err: None,
@@ -229,6 +234,11 @@ impl App {
             self.diff_mode = false;
             return;
         }
+        let ext = rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp") {
+            self.open_image(&root, rel);
+            return;
+        }
         let state = self.git.files.get(rel).cloned();
         if state.as_deref() == Some("D") {
             self.open_deleted(&root, rel);
@@ -277,6 +287,7 @@ impl App {
                     preview: is_md,
                     dirty: false,
                     blocks,
+                    is_img: false,
                 });
                 self.diff_mode = false;
                 self.scroll_y = 0.0;
@@ -286,6 +297,59 @@ impl App {
             }
             Err(e) => self.toast(e),
         }
+    }
+
+    fn open_image(&mut self, root: &Path, rel: &str) {
+        let full = root.join(rel);
+        let bytes = match std::fs::read(&full) {
+            Ok(b) if b.len() <= 16 * 1024 * 1024 => b,
+            _ => {
+                self.toast("图片过大或无法读取");
+                return;
+            }
+        };
+        let img = match image::load_from_memory(&bytes) {
+            Ok(i) => i,
+            Err(e) => {
+                self.toast(format!("图片解码失败：{}", e));
+                return;
+            }
+        };
+        let rgba = img.to_rgba8();
+        let size = [rgba.width() as usize, rgba.height() as usize];
+        let color = egui::ColorImage::from_rgba_unmultiplied(size, &rgba.into_raw());
+        let tex = self
+            .ctx
+            .load_texture(rel, color, egui::TextureOptions::LINEAR);
+        self.img = Some((rel.to_string(), tex));
+        let name = rel.rsplit('/').next().unwrap_or(rel).to_string();
+        self.cur = Some(Cur {
+            path: rel.to_string(),
+            name: name.clone(),
+            text: String::new(),
+            diff_text: String::new(),
+            lines: Vec::new(),
+            diff_lines: Vec::new(),
+            gutter: String::new(),
+            diff_gutter: String::new(),
+            size: bytes.len() as u64,
+            binary: false,
+            truncated: false,
+            deleted: false,
+            digits: 1,
+            gen_lines: 1,
+            can_wrap: true,
+            is_md: false,
+            preview: false,
+            dirty: false,
+            blocks: Vec::new(),
+            is_img: true,
+        });
+        self.diff_mode = false;
+        self.scroll_y = 0.0;
+        self.rev += 1;
+        self.title = format!("{} — Ai-View", name);
+        self.title_dirty = true;
     }
 
     fn open_deleted(&mut self, root: &Path, rel: &str) {
@@ -320,6 +384,7 @@ impl App {
             preview: false,
             dirty: false,
             blocks: Vec::new(),
+            is_img: false,
         });
         self.diff_mode = true;
         self.scroll_y = 0.0;
@@ -383,7 +448,7 @@ impl App {
         let Some(root) = self.root.clone() else { return };
         let res = {
             let Some(cur) = self.cur.as_ref() else { return };
-            if !cur.is_md || cur.deleted || cur.binary {
+            if cur.deleted || cur.binary || cur.is_img {
                 return;
             }
             fsops::write_file(&root, &cur.path, &cur.text)
@@ -421,6 +486,10 @@ impl App {
             .frame(frame)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
+                    let drag = ui.interact(ui.max_rect(), egui::Id::new("titlebar"), Sense::drag());
+                    if drag.drag_started() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                    }
                     ui.spacing_mut().item_spacing.x = 10.0;
                     logo(ui, 24.0);
                     brand(ui);
@@ -444,6 +513,17 @@ impl App {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        if win_btn(ui, "×").clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        if win_btn(ui, "口").clicked() {
+                            let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+                        }
+                        if win_btn(ui, "—").clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                        ui.add_space(8.0);
                         avatar(ui);
                         ui.add_space(2.0);
                         if icon_btn(ui, "设", false).on_hover_text("设置").clicked() {
@@ -1593,9 +1673,26 @@ impl App {
             });
     }
 
+    fn image_view(&mut self, ui: &mut egui::Ui) {
+        let Some((_, tex)) = &self.img else {
+            ui.centered_and_justified(|ui| {
+                ui.label(RichText::new("图片未加载").size(12.0).color(theme::muted()));
+            });
+            return;
+        };
+        let avail = ui.available_size() - Vec2::new(48.0, 48.0);
+        let [w, h] = tex.size();
+        let s = (avail.x / w as f32).min(avail.y / h as f32).min(1.0);
+        let size = Vec2::new(w as f32 * s, h as f32 * s);
+        let id = tex.id();
+        ui.centered_and_justified(|ui| {
+            ui.add(egui::Image::new((id, size)).rounding(8.0));
+        });
+    }
+
     fn code(&mut self, ui: &mut egui::Ui) {
         let Some(c) = self.cur.as_ref() else { return };
-        let (binary, is_md, preview, deleted, truncated, can_wrap, size) = (
+        let (binary, is_md, preview, deleted, truncated, can_wrap, size, is_img) = (
             c.binary,
             c.is_md,
             c.preview,
@@ -1603,7 +1700,12 @@ impl App {
             c.truncated,
             c.can_wrap,
             c.size,
+            c.is_img,
         );
+        if is_img {
+            self.image_view(ui);
+            return;
+        }
         if binary {
             let msg = format!("二进制文件 · {}", fmt_size(size));
             let h = ui.available_height();
@@ -1622,7 +1724,7 @@ impl App {
             return;
         }
 
-        let editable = is_md && !self.diff_mode && !deleted && !truncated;
+        let editable = !self.diff_mode && !deleted && !truncated && !binary && !is_img;
         let wrap = self.wrap && can_wrap;
         let rev = self.rev;
         let scroll_y = self.scroll_y;
@@ -1817,6 +1919,10 @@ impl App {
             .frame(frame)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
+                    let drag = ui.interact(ui.max_rect(), egui::Id::new("titlebar"), Sense::drag());
+                    if drag.drag_started() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                    }
                     ui.spacing_mut().item_spacing.x = 10.0;
                     let branch = if self.git.branch.is_empty() {
                         "-".to_string()
@@ -2607,4 +2713,20 @@ fn pill_tab(ui: &mut egui::Ui, text: &str, on: bool) -> bool {
         color,
     );
     resp.clicked()
+}
+
+fn win_btn(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), Sense::click());
+    if resp.hovered() {
+        let c = if text == "×" { theme::rose() } else { theme::hover() };
+        ui.painter().rect_filled(rect, 6.0, c);
+    }
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        text,
+        FontId::proportional(12.0),
+        if resp.hovered() { theme::text() } else { theme::muted() },
+    );
+    resp
 }

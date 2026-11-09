@@ -14,9 +14,9 @@
 
 | 系统 | 包 | 用法 |
 |---|---|---|
-| Windows | [Ai-View-v1.3.0-windows-x64.zip](https://github.com/Mr-7y/ai-view/releases/latest) | 解压双击 `Ai-View.exe`，约 4.7 MB，无需运行库 |
-| macOS | [Ai-View-v1.3.0-macos-universal.zip](https://github.com/Mr-7y/ai-view/releases/latest) | 解压得到 `Ai-View.app`，Intel / Apple Silicon 通用 |
-| Linux | [Ai-View-v1.3.0-linux-x64.tar.gz](https://github.com/Mr-7y/ai-view/releases/latest) | `tar -xzf` 后 `./ai-view` |
+| Windows | [Ai-View-v1.3.1-windows-x64.zip](https://github.com/Mr-7y/ai-view/releases/latest) | 解压双击 `Ai-View.exe`，约 4.7 MB，无需运行库 |
+| macOS | [Ai-View-v1.3.1-macos-universal.zip](https://github.com/Mr-7y/ai-view/releases/latest) | 解压得到 `Ai-View.app`，Intel / Apple Silicon 通用 |
+| Linux | [Ai-View-v1.3.1-linux-x64.tar.gz](https://github.com/Mr-7y/ai-view/releases/latest) | `tar -xzf` 后 `./ai-view` |
 
 三个包都由 GitHub Actions 在各自原生机器上编译（Windows Server、macOS、Ubuntu 22.04），不是交叉编译产物。
 

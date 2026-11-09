@@ -83,6 +83,10 @@ pub struct App {
     left_open: bool,
     right_open: bool,
     rtab: usize,
+    branches: Vec<String>,
+    history: Vec<(String, String, String)>,
+    branch_menu: bool,
+    show_history: bool,
     commit_msg: String,
 
     files: Vec<String>,
@@ -135,6 +139,10 @@ impl App {
             left_open: true,
             right_open: true,
             rtab: 0,
+            branches: Vec::new(),
+            history: Vec::new(),
+            branch_menu: false,
+            show_history: false,
             commit_msg: String::new(),
             files: Vec::new(),
             files_loaded: false,
@@ -641,13 +649,18 @@ impl App {
                     } else {
                         self.git.branch.clone()
                     };
-                    pill(ui, "⑂", &branch);
+                    if pill_btn(ui, "⑂", &branch).clicked() {
+                        if self.branch_menu { self.branch_menu = false; } else {
+                            self.branches = self.root.as_ref().map(|r| gitops::branches(r)).unwrap_or_default();
+                            self.branch_menu = true;
+                        }
+                    }
                     let remote = if self.git.remote.is_empty() {
                         "-".to_string()
                     } else {
                         self.git.remote.clone()
                     };
-                    pill(ui, "☁", &remote);
+                    pill_btn(ui, "☁", &remote);
                     ui.label(
                         RichText::new(format!("↑ {}", self.git.ahead))
                             .size(10.5)
@@ -662,7 +675,10 @@ impl App {
                     );
 
                     ui.add_space(4.0);
-                    graph(ui, self.git.ahead, self.git.behind);
+                    if graph(ui, self.git.ahead, self.git.behind).clicked() {
+                        self.history = self.root.as_ref().map(|r| gitops::log(r)).unwrap_or_default();
+                        self.show_history = true;
+                    }
                     ui.add_space(4.0);
 
                     let input_w = (ui.available_width() - 520.0).max(120.0);
@@ -1256,7 +1272,7 @@ impl App {
     fn right_ui(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.x = 14.0;
             ui.add_space(10.0);
             for (i, name) in ["外观", "变更", "信息"].iter().enumerate() {
                 if tab_btn(ui, name, self.rtab == i) {
@@ -1389,6 +1405,38 @@ impl App {
         kv(ui, "新增", &a.to_string());
         kv(ui, "删除", &d.to_string());
         kv(ui, "未跟踪", &u.to_string());
+        ui.add_space(12.0);
+        rule(ui, 14.0);
+        ui.add_space(8.0);
+        let files: Vec<(String, String)> =
+            self.git.files.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        for (path, state) in &files {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new(state)
+                        .size(10.0)
+                        .monospace()
+                        .color(theme::git_color(state)),
+                );
+                ui.add_space(4.0);
+                ui.label(RichText::new(path).size(10.0).color(theme::text()));
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    ui.add_space(14.0);
+                    if *state == "M" && ghost(ui, "撤销").clicked() {
+                        if let Some(root) = self.root.clone() {
+                            match gitops::discard(&root, path) {
+                                Ok(s) => {
+                                    self.toast(s);
+                                    self.refresh_git(true);
+                                }
+                                Err(e) => self.toast(e),
+                            }
+                        }
+                    }
+                });
+            });
+        }
         ui.add_space(12.0);
         rule(ui, 14.0);
         ui.add_space(10.0);
@@ -2040,6 +2088,57 @@ impl App {
             }
         }
 
+        if self.branch_menu {
+            let branches = self.branches.clone();
+            let cur = self.git.branch.clone();
+            let resp = egui::Window::new("切换分支")
+                .collapsible(false).resizable(false)
+                .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 80.0))
+                .show(ctx, |ui| {
+                    if branches.is_empty() {
+                        ui.label(RichText::new("没有本地分支").size(11.5).color(theme::muted()));
+                    }
+                    for b in &branches {
+                        let on = b == &cur;
+                        if ui.add(egui::Button::new(RichText::new(b).size(12.0).monospace().color(if on { theme::brass() } else { theme::text() })).frame(false).min_size(Vec2::new(240.0, 26.0))).clicked() {
+                            if let Some(root) = self.root.clone() {
+                                match gitops::checkout(&root, b) {
+                                    Ok(s) => { self.toast(s); self.refresh_git(true); }
+                                    Err(e) => self.toast(e),
+                                }
+                            }
+                            self.branch_menu = false;
+                        }
+                    }
+                });
+            if resp.is_none() { self.branch_menu = false; }
+        }
+
+        if self.show_history {
+            let history = self.history.clone();
+            let resp = egui::Window::new("提交历史")
+                .collapsible(false).resizable(false).default_width(540.0)
+                .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 80.0))
+                .show(ctx, |ui| {
+                    if history.is_empty() {
+                        ui.label(RichText::new("没有提交记录").size(11.5).color(theme::muted()));
+                        return;
+                    }
+                    egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                        for (h, s, d) in &history {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(h).size(10.5).color(theme::brass()).monospace());
+                                ui.label(RichText::new(s).size(11.5).color(theme::text()));
+                                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(RichText::new(d).size(9.5).color(theme::faint()));
+                                });
+                            });
+                        }
+                    });
+                });
+            if resp.is_none() { self.show_history = false; }
+        }
+
         if self.palette {
             self.palette_ui(ctx);
         }
@@ -2371,26 +2470,32 @@ fn avatar(ui: &mut egui::Ui) {
     );
 }
 
-fn pill(ui: &mut egui::Ui, icon: &str, text: &str) {
+fn pill_btn(ui: &mut egui::Ui, icon: &str, text: &str) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         format!("{}  {}", icon, text),
         FontId::proportional(11.0),
         theme::muted(),
     );
     let pad = Vec2::new(9.0, 5.0);
-    let (rect, _) = ui.allocate_exact_size(galley.size() + pad * 2.0, Sense::hover());
-    ui.painter()
-        .rect(rect, 8.0, theme::panel(), Stroke::new(1.0, theme::line()));
+    let (rect, resp) = ui.allocate_exact_size(galley.size() + pad * 2.0, Sense::click());
+    let hover = resp.hovered();
+    ui.painter().rect(
+        rect,
+        8.0,
+        if hover { theme::panel2() } else { theme::panel() },
+        Stroke::new(1.0, if hover { theme::line2() } else { theme::line() }),
+    );
     ui.painter().galley(
         egui::pos2(rect.left() + pad.x, rect.center().y - galley.size().y / 2.0),
         galley,
-        theme::muted(),
+        if hover { theme::text() } else { theme::muted() },
     );
+    resp
 }
 
-fn graph(ui: &mut egui::Ui, ahead: usize, behind: usize) {
+fn graph(ui: &mut egui::Ui, ahead: usize, behind: usize) -> egui::Response {
     let w = 132.0;
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 32.0), Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 32.0), Sense::click());
     let p = ui.painter();
     let y = rect.center().y;
     p.line_segment(
@@ -2413,6 +2518,7 @@ fn graph(ui: &mut egui::Ui, ahead: usize, behind: usize) {
     }
     let c = egui::pos2(rect.right() - 6.0, y);
     p.circle(c, 4.0, theme::bg2(), Stroke::new(1.4, theme::brass()));
+    resp
 }
 
 fn ghost(ui: &mut egui::Ui, text: &str) -> egui::Response {

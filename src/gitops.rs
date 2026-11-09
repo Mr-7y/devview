@@ -267,3 +267,56 @@ pub fn diff(root: &Path, rel: &str, full: &Path, state: Option<&str>) -> (String
     }
     (text, st)
 }
+
+/// 本地分支列表
+pub fn branches(root: &Path) -> Vec<String> {
+    run(root, &["branch", "--format=%(refname:short)"], 4000)
+        .map(|o| {
+            o.lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 切换分支
+pub fn checkout(root: &Path, branch: &str) -> Result<String, String> {
+    run(root, &["checkout", branch], 30000)
+        .map(|o| {
+            let t = o.trim();
+            if t.is_empty() {
+                format!("已切换到 {}", branch)
+            } else {
+                t.lines().last().unwrap_or("").to_string()
+            }
+        })
+        .ok_or_else(|| "切换失败或超时".to_string())
+}
+
+/// 最近提交记录 (hash, 说明, 相对时间)
+pub fn log(root: &Path) -> Vec<(String, String, String)> {
+    let out = match run(root, &["log", "--pretty=%h|%s|%cr", "-30"], 8000) {
+        Some(o) => o,
+        None => return Vec::new(),
+    };
+    out.lines()
+        .filter_map(|l| {
+            let mut it = l.splitn(3, '|');
+            Some((
+                it.next()?.to_string(),
+                it.next()?.to_string(),
+                it.next().unwrap_or("").to_string(),
+            ))
+        })
+        .collect()
+}
+
+/// 撤销单个文件的未提交修改
+pub fn discard(root: &Path, path: &str) -> Result<String, String> {
+    if run(root, &["checkout", "--", path], 15000).is_some() {
+        Ok("已撤销更改".to_string())
+    } else {
+        Err("撤销失败".to_string())
+    }
+}

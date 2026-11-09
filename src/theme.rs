@@ -5,9 +5,25 @@
 
 use crate::syntax;
 use egui::{Color32, FontFamily, FontId, TextStyle};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+use std::sync::OnceLock;
 
 static LIGHT: AtomicBool = AtomicBool::new(false);
+
+// 代码字号（x10）/ 行高倍率（x100）/ 代码字体选择
+static CODE_SIZE: AtomicU32 = AtomicU32::new(150);
+static CODE_RATIO: AtomicU32 = AtomicU32::new(190);
+static CODE_FONT: AtomicU8 = AtomicU8::new(0);
+static ALT_FONTS: OnceLock<Vec<String>> = OnceLock::new();
+
+pub fn code_size() -> f32 { CODE_SIZE.load(Ordering::Relaxed) as f32 / 10.0 }
+pub fn set_code_size(v: f32) { CODE_SIZE.store((v * 10.0).round() as u32, Ordering::Relaxed); }
+pub fn code_ratio() -> f32 { CODE_RATIO.load(Ordering::Relaxed) as f32 / 100.0 }
+pub fn set_code_ratio(v: f32) { CODE_RATIO.store((v * 100.0).round() as u32, Ordering::Relaxed); }
+pub fn line_height() -> f32 { code_size() * code_ratio() }
+pub fn code_font() -> u8 { CODE_FONT.load(Ordering::Relaxed) }
+pub fn set_code_font(v: u8) { CODE_FONT.store(v, Ordering::Relaxed); }
+pub fn alt_fonts() -> &'static [String] { ALT_FONTS.get_or_init(Vec::new) }
 
 pub fn light() -> bool {
     LIGHT.load(Ordering::Relaxed)
@@ -285,6 +301,42 @@ pub fn setup(ctx: &egui::Context) {
             .or_default()
             .insert(0, name.to_owned());
     }
+    // 可选代码字体：存在才注册，供外观面板切换
+    let mut loaded: Vec<String> = Vec::new();
+    #[cfg(target_os = "windows")]
+    {
+        let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:".to_string() + &String::from("\\").repeat(1) + "Windows");
+        let fdir = std::path::PathBuf::from(windir).join("Fonts");
+        for (f, fam) in [("consola.ttf", "Consolas"), ("CascadiaMono.ttf", "Cascadia Mono"), ("CascadiaCode.ttf", "Cascadia Code")] {
+            if let Ok(b) = std::fs::read(fdir.join(f)) {
+                fonts.font_data.insert(fam.to_string(), egui::FontData::from_owned(b));
+                fonts.families.entry(FontFamily::Name(fam.to_string().into())).or_default().push(fam.to_string());
+                loaded.push(fam.to_string());
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        for (p, fam) in [("/System/Library/Fonts/Menlo.ttc", "Menlo"), ("/System/Library/Fonts/SFNSMono.ttf", "SF Mono")] {
+            if let Ok(b) = std::fs::read(p) {
+                fonts.font_data.insert(fam.to_string(), egui::FontData::from_owned(b));
+                fonts.families.entry(FontFamily::Name(fam.to_string().into())).or_default().push(fam.to_string());
+                loaded.push(fam.to_string());
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        for (p, fam) in [("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "DejaVu Sans Mono")] {
+            if let Ok(b) = std::fs::read(p) {
+                fonts.font_data.insert(fam.to_string(), egui::FontData::from_owned(b));
+                fonts.families.entry(FontFamily::Name(fam.to_string().into())).or_default().push(fam.to_string());
+                loaded.push(fam.to_string());
+            }
+        }
+    }
+    let _ = ALT_FONTS.set(loaded);
+
     if let Some((name, bytes, idx)) = cjk() {
         let mut fd = egui::FontData::from_owned(bytes);
         fd.index = idx;

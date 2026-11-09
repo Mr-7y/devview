@@ -525,62 +525,53 @@ impl App {
                         self.pal_sel = 0;
                     }
 
-                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        if win_btn(ui, "×").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                        if win_btn(ui, "口").clicked() {
-                            let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
-                        }
-                        if win_btn(ui, "—").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                        }
-                        ui.add_space(8.0);
-                        avatar(ui);
-                        ui.add_space(2.0);
-                        if icon_btn(ui, "设", false).on_hover_text("设置").clicked() {
-                            self.right_open = true;
-                            self.rtab = 0;
-                        }
-                        ui.add_space(2.0);
-                        let night = !theme::light();
-                        if icon_btn(ui, if night { "夜" } else { "日" }, false)
-                            .on_hover_text(if night { "切到日纸" } else { "切到夜航" })
-                            .clicked()
-                        {
-                            theme::toggle();
-                            theme::apply(ctx);
-                            self.rev += 1;
-                        }
-                        ui.add_space(8.0);
-                        sync_chip(ui, self.git_at.elapsed(), self.git.is_git);
-                        ui.add_space(6.0);
-                        if icon_btn(ui, "合", self.left_open && self.right_open)
-                            .on_hover_text("两侧栏一起收起 / 展开")
-                            .clicked()
-                        {
-                            let both = self.left_open && self.right_open;
-                            self.left_open = !both;
-                            self.right_open = !both;
-                        }
-                        if icon_btn(ui, "右", self.right_open)
-                            .on_hover_text("右栏")
-                            .clicked()
-                        {
-                            self.right_open = !self.right_open;
-                        }
-                        if icon_btn(ui, "左", self.left_open)
-                            .on_hover_text("左栏")
-                            .clicked()
-                        {
-                            self.left_open = !self.left_open;
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                            if win_btn(ui, "×").clicked() {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                            if win_btn(ui, "口").clicked() {
+                                let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+                            }
+                            if win_btn(ui, "—").clicked() {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                            }
+                            ui.add_space(10.0);
+                            avatar(ui);
+                            ui.add_space(4.0);
+                            let night = !theme::light();
+                            if icon_theme(ui, night).clicked() {
+                                theme::toggle();
+                                theme::apply(ctx);
+                                self.rev += 1;
+                            }
+                            ui.add_space(8.0);
+                            sync_chip(ui, self.git_at.elapsed(), self.git.is_git);
+                            ui.add_space(6.0);
+                            if icon_panels2(ui, self.left_open && self.right_open)
+                                .on_hover_text("两侧栏一起收起 / 展开")
+                                .clicked()
+                            {
+                                let both = self.left_open && self.right_open;
+                                self.left_open = !both;
+                                self.right_open = !both;
+                            }
+                            if icon_panel(ui, 1, self.right_open)
+                                .on_hover_text("右栏")
+                                .clicked()
+                            {
+                                self.right_open = !self.right_open;
+                            }
+                            if icon_panel(ui, 0, self.left_open)
+                                .on_hover_text("左栏")
+                                .clicked()
+                            {
+                                self.left_open = !self.left_open;
+                            }
+                        });
                     });
                 });
-            });
     }
-
     fn project_pill(&mut self, ui: &mut egui::Ui) {
         let cur_name = self
             .conf
@@ -1321,32 +1312,82 @@ impl App {
                 self.rev += 1;
             }
         });
-        ui.add_space(14.0);
-        row_label(ui, "界面字体", "系统无衬线");
+
+        ui.add_space(18.0);
+        row_label(ui, "代码字体", "");
         ui.add_space(6.0);
-        fake_select(ui, "系统无衬线");
-        ui.add_space(12.0);
-        row_label(ui, "代码字体", "JetBrains Mono");
-        ui.add_space(6.0);
-        fake_select(ui, "JetBrains Mono");
-        ui.add_space(14.0);
-        row_label(ui, "字号", "15.0 px");
-        ui.add_space(2.0);
-        slider(ui, 0.72);
-        ui.add_space(12.0);
-        row_label(ui, "行高", "1.90");
-        ui.add_space(2.0);
-        slider(ui, 0.9);
-        ui.add_space(12.0);
+        let fonts = theme::alt_fonts().to_vec();
+        let cur = theme::code_font();
+        let sel = if cur == 0 {
+            "默认等宽".to_string()
+        } else {
+            fonts
+                .get((cur as usize - 1).min(fonts.len().saturating_sub(1)))
+                .cloned()
+                .unwrap_or_else(|| "默认等宽".to_string())
+        };
+        let mut chosen: Option<u8> = None;
+        egui::ComboBox::from_id_salt("code-font")
+            .width(w - 14.0)
+            .selected_text(RichText::new(sel).size(11.0).color(theme::text()))
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(cur == 0, RichText::new("默认等宽").size(11.0))
+                    .clicked()
+                {
+                    chosen = Some(0);
+                }
+                for (i, f) in fonts.iter().enumerate() {
+                    if ui
+                        .selectable_label(
+                            cur == (i + 1) as u8,
+                            RichText::new(f).size(11.0).monospace(),
+                        )
+                        .clicked()
+                    {
+                        chosen = Some((i + 1) as u8);
+                    }
+                }
+                if fonts.is_empty() {
+                    ui.label(
+                        RichText::new("未检测到可选字体")
+                            .size(10.0)
+                            .color(theme::faint()),
+                    );
+                }
+            });
+        if let Some(v) = chosen {
+            theme::set_code_font(v);
+            self.rev += 1;
+        }
+
+        ui.add_space(18.0);
+        row_label(ui, "字号", &format!("{:.1} px", theme::code_size()));
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.add_space(14.0);
-            ui.label(RichText::new("连字").size(10.5).color(theme::muted()));
-            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                ui.add_space(14.0);
-                toggle(ui, true);
-            });
+            let mut v = theme::code_size();
+            let r = ui.add(egui::Slider::new(&mut v, 12.0..=20.0).show_value(false));
+            if r.changed() {
+                theme::set_code_size(v);
+                self.rev += 1;
+            }
         });
+
         ui.add_space(16.0);
+        row_label(ui, "行高", &format!("{:.2}", theme::code_ratio()));
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            let mut v = theme::code_ratio();
+            let r = ui.add(egui::Slider::new(&mut v, 1.4..=2.3).show_value(false));
+            if r.changed() {
+                theme::set_code_ratio(v);
+                self.rev += 1;
+            }
+        });
+
+        ui.add_space(18.0);
         ui.horizontal(|ui| {
             ui.add_space(14.0);
             egui::Frame::none()
@@ -1358,16 +1399,16 @@ impl App {
                     ui.set_width((w - 34.0).max(70.0));
                     ui.label(
                         RichText::new("let theme = Night;")
-                            .size(12.0)
+                            .size(theme::code_size())
                             .color(theme::brass())
-                            .monospace(),
+                            .font(syntax::font()),
                     );
                     ui.add_space(3.0);
                     ui.label(
                         RichText::new("sync(remote);")
-                            .size(12.0)
+                            .size(theme::code_size())
                             .color(theme::text())
-                            .monospace(),
+                            .font(syntax::font()),
                     );
                     ui.add_space(6.0);
                     ui.label(
@@ -1380,14 +1421,16 @@ impl App {
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.add_space(14.0);
-            if ghost(ui, "↻ 恢复默认").clicked() {
+            if ghost(ui, "恢复默认").clicked() {
+                theme::set_code_size(15.0);
+                theme::set_code_ratio(1.9);
+                theme::set_code_font(0);
                 theme::set_light(false);
                 theme::apply(ui.ctx());
                 self.rev += 1;
             }
         });
     }
-
     fn right_changes(&mut self, ui: &mut egui::Ui) {
         let (mut m, mut a, mut d, mut u) = (0, 0, 0, 0);
         for v in self.git.files.values() {
@@ -1841,7 +1884,7 @@ impl App {
                             TextFormat {
                                 font_id: mono.clone(),
                                 color: theme::faint(),
-                                line_height: Some(syntax::LINE_HEIGHT),
+                                line_height: Some(theme::line_height()),
                                 ..Default::default()
                             },
                         );
@@ -2837,7 +2880,7 @@ fn pill_tab(ui: &mut egui::Ui, text: &str, on: bool) -> bool {
 }
 
 fn win_btn(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(46.0, 30.0), Sense::click());
     if resp.hovered() {
         let c = if text == "×" { theme::rose() } else { theme::hover() };
         ui.painter().rect_filled(rect, 6.0, c);
@@ -2849,5 +2892,68 @@ fn win_btn(ui: &mut egui::Ui, text: &str) -> egui::Response {
         FontId::proportional(12.0),
         if resp.hovered() { theme::text() } else { theme::muted() },
     );
+    resp
+}
+
+fn icon_panel(ui: &mut egui::Ui, side: u8, on: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(26.0, 26.0), Sense::click());
+    let p = ui.painter();
+    let r = rect.shrink(5.0);
+    p.rect_stroke(r, 3.0, Stroke::new(1.2, theme::muted()));
+    let bw = r.width() * 0.4;
+    let bar = if side == 0 {
+        egui::Rect::from_min_size(r.min, Vec2::new(bw, r.height()))
+    } else {
+        egui::Rect::from_min_max(
+            egui::pos2(r.right() - bw, r.top()),
+            egui::pos2(r.right(), r.bottom()),
+        )
+    };
+    let col = if on { theme::brass() } else { theme::muted().gamma_multiply(0.55) };
+    p.rect_filled(bar, 1.5, col);
+    resp
+}
+
+fn icon_panels2(ui: &mut egui::Ui, on: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(26.0, 26.0), Sense::click());
+    let p = ui.painter();
+    let r = rect.shrink(5.0);
+    p.rect_stroke(r, 3.0, Stroke::new(1.2, theme::muted()));
+    let bw = r.width() * 0.3;
+    let col = if on { theme::brass() } else { theme::muted().gamma_multiply(0.55) };
+    p.rect_filled(egui::Rect::from_min_size(r.min, Vec2::new(bw, r.height())), 1.5, col);
+    p.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(r.right() - bw, r.top()),
+            egui::pos2(r.right(), r.bottom()),
+        ),
+        1.5,
+        col,
+    );
+    resp
+}
+
+fn icon_theme(ui: &mut egui::Ui, night: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(26.0, 26.0), Sense::click());
+    let p = ui.painter();
+    let c = rect.center();
+    if night {
+        p.circle_filled(c, 7.0, theme::brass());
+        p.circle_filled(c + Vec2::new(4.0, -2.5), 6.2, theme::panel());
+    } else {
+        for k in 0..8 {
+            let a = k as f32 * std::f32::consts::TAU / 8.0;
+            let d1 = 6.2;
+            let d2 = 9.2;
+            p.line_segment(
+                [
+                    c + Vec2::new(a.cos() * d1, a.sin() * d1),
+                    c + Vec2::new(a.cos() * d2, a.sin() * d2),
+                ],
+                Stroke::new(1.3, theme::brass()),
+            );
+        }
+        p.circle_filled(c, 4.5, theme::brass());
+    }
     resp
 }

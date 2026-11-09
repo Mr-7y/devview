@@ -1,7 +1,7 @@
 //! 轻量语法高亮：手写词法扫描，零依赖、零外部语法文件。
 //! 输出按行切分的 span 列表，渲染时再拼成 LayoutJob（可缓存 galley）。
 
-use egui::{Color32, FontId, TextFormat};
+use egui::{Color32, FontFamily, FontId, TextFormat};
 use egui::text::TextWrapping;
 
 pub const P: u8 = 0; // plain
@@ -809,12 +809,17 @@ pub fn tokenize(src: &str, lang: &str) -> Vec<Line> {
     split_lines(spans)
 }
 
-/// 代码字号 15px，行高 1.9；阅读优先
-pub const CODE_SIZE: f32 = 15.0;
-pub const LINE_HEIGHT: f32 = 28.5;
-
 pub fn font() -> FontId {
-    FontId::monospace(CODE_SIZE)
+    let size = crate::theme::code_size();
+    let idx = crate::theme::code_font();
+    if idx > 0 {
+        let list = crate::theme::alt_fonts();
+        let i = (idx as usize - 1).min(list.len().saturating_sub(1));
+        if let Some(name) = list.get(i) {
+            return FontId::new(size, FontFamily::Name(name.clone().into()));
+        }
+    }
+    FontId::monospace(size)
 }
 
 pub fn build_job(lines: &[Line], wrap: bool, width: f32) -> egui::text::LayoutJob {
@@ -833,7 +838,7 @@ pub fn build_job(lines: &[Line], wrap: bool, width: f32) -> egui::text::LayoutJo
     let base = TextFormat {
         font_id: f.clone(),
         color: color(P),
-        line_height: Some(LINE_HEIGHT),
+        line_height: Some(crate::theme::line_height()),
         ..Default::default()
     };
     for (idx, line) in lines.iter().enumerate() {
@@ -848,7 +853,7 @@ pub fn build_job(lines: &[Line], wrap: bool, width: f32) -> egui::text::LayoutJo
                         font_id: f.clone(),
                         color: color(*t),
                         background: bg(*t),
-                        line_height: Some(LINE_HEIGHT),
+                        line_height: Some(crate::theme::line_height()),
                         ..Default::default()
                     },
                 );

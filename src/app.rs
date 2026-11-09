@@ -63,6 +63,12 @@ struct GalleyCache {
 pub struct App {
     filter: String,
     ctx: egui::Context,
+    search: bool,
+    search_q: String,
+    search_hits: Vec<(usize, usize, usize)>,
+    search_sel: usize,
+    search_cached: (String, u64),
+    ctx_menu: Option<(egui::Pos2, String, bool)>,
     img: Option<(String, egui::TextureHandle)>,
     conf: conf::Conf,
     root: Option<PathBuf>,
@@ -121,6 +127,12 @@ impl App {
         let mut app = App {
             filter: String::new(),
             ctx: cc.egui_ctx.clone(),
+            search: false,
+            search_q: String::new(),
+            search_hits: Vec::new(),
+            search_sel: 0,
+            search_cached: (String::new(), 0),
+            ctx_menu: None,
             img: None,
             conf,
             root: None,
@@ -160,6 +172,13 @@ impl App {
         if let Ok(rel) = std::env::var("AI_VIEW_OPEN") {
             if !rel.is_empty() {
                 app.open(&rel);
+            }
+        }
+        #[cfg(debug_assertions)]
+        if std::env::var("AI_VIEW_SEARCH").as_deref() == Ok("1") {
+            app.search = true;
+            if let Ok(q) = std::env::var("AI_VIEW_QUERY") {
+                app.search_q = q;
             }
         }
         app
@@ -641,7 +660,88 @@ impl App {
                         self.git.branch.clone()
                     };
                     if pill_btn(ui, "⑂", &branch).clicked() {
-                        if self.branch_menu { self.branch_menu = false; } else {
+                        if let Some((pos, path, is_dir)) = self.ctx_menu.clone() {
+            let root = self.root.clone();
+            egui::Area::new(egui::Id::new("ctx-mask"))
+                .order(egui::Order::Middle)
+                .fixed_pos(egui::pos2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    let r = ctx.screen_rect();
+                    ui.painter().rect_filled(r, 0.0, Color32::TRANSPARENT);
+                    let resp = ui.allocate_rect(r, Sense::click());
+                    if resp.clicked() || resp.secondary_clicked() {
+                        self.ctx_menu = None;
+                    }
+                });
+            egui::Area::new(egui::Id::new("ctx-menu"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(pos)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(theme::raise())
+                        .stroke(Stroke::new(1.0, theme::line2()))
+                        .rounding(8.0)
+                        .inner_margin(egui::Margin::same(6.0))
+                        .show(ui, |ui| {
+                            ui.set_width(200.0);
+                            let is_md_m = !is_dir &&
+                                self.git.files.get(&path).map(|v| v == "M").unwrap_or(false);
+                            let mut item = |ui: &mut egui::Ui, label: &str, enabled: bool| -> bool {
+                                if enabled {
+                                    ui.add(
+                                        egui::Button::new(
+                                            RichText::new(label).size(11.5).color(theme::text()),
+                                        )
+                                        .frame(false)
+                                        .min_size(Vec2::new(188.0, 26.0)),
+                                    )
+                                    .clicked()
+                                } else {
+                                    ui.label(RichText::new(label).size(11.5).color(theme::faint()));
+                                    false
+                                }
+                            };
+                            if !is_dir && item(ui, "打开", true) {
+                                self.open(&path);
+                                self.ctx_menu = None;
+                            }
+                            if is_dir && item(ui, "展开 / 折叠", true) {
+                                if let Some(r) = &root {
+                                    self.tree.toggle(r, &path);
+                                }
+                                self.ctx_menu = None;
+                            }
+                            if item(ui, "复制路径", true) {
+                                ctx.copy_text(path.clone());
+                                self.toast("路径已复制");
+                                self.ctx_menu = None;
+                            }
+                            if item(ui, "在资源管理器中显示", true) {
+                                if let Some(r) = &root {
+                                    reveal_in_explorer(r, &path);
+                                }
+                                self.ctx_menu = None;
+                            }
+                            if is_md_m && item(ui, "撤销未提交更改", true) {
+                                if let Some(r) = &root {
+                                    match gitops::discard(r, &path) {
+                                        Ok(s) => {
+                                            self.toast(s);
+                                            self.refresh_git(true);
+                                            if self.cur.as_ref().map(|c| c.path == path).unwrap_or(false) {
+                                                self.open(&path);
+                                            }
+                                        }
+                                        Err(e) => self.toast(e),
+                                    }
+                                }
+                                self.ctx_menu = None;
+                            }
+                        });
+                });
+        }
+
+        if self.branch_menu { self.branch_menu = false; } else {
                             self.branches = self.root.as_ref().map(|r| gitops::branches(r)).unwrap_or_default();
                             self.branch_menu = true;
                         }
@@ -1083,6 +1183,13 @@ impl App {
                         );
                     }
 
+                    if resp.secondary_clicked() {
+                        self.ctx_menu = Some((
+                            resp.interact_pointer_pos().unwrap_or(rect.center()),
+                            row.path.clone(),
+                            row.dir,
+                        ));
+                    }
                     if resp.clicked() {
                         if row.dir {
                             clicked = Some(row.path.clone());
@@ -1200,6 +1307,13 @@ impl App {
                         FontId::proportional(12.0),
                         theme::text(),
                     );
+                    if resp.secondary_clicked() {
+                        self.ctx_menu = Some((
+                            resp.interact_pointer_pos().unwrap_or(rect.center()),
+                            path.clone(),
+                            false,
+                        ));
+                    }
                     if resp.clicked() {
                         clicked = Some(path.clone());
                     }
@@ -1584,6 +1698,9 @@ impl App {
             }
             self.tabs_bar(ui);
             self.crumb(ui);
+            if self.search {
+                self.search_bar(ui);
+            }
             let y = ui.cursor().top();
             ui.painter()
                 .hline(ui.max_rect().x_range(), y, Stroke::new(1.0, theme::line()));
@@ -1788,6 +1905,77 @@ impl App {
         });
     }
 
+
+    fn search_step(&mut self, dir: i32) {
+        let n = self.search_hits.len();
+        if n == 0 {
+            return;
+        }
+        self.search_sel = ((self.search_sel as i32 + dir).rem_euclid(n as i32)) as usize;
+        self.scroll_to_hit();
+    }
+
+    fn scroll_to_hit(&mut self) {
+        if let Some((li, _, _)) = self.search_hits.get(self.search_sel) {
+            self.scroll_y = (*li as f32 * theme::line_height() - 120.0).max(0.0);
+        }
+    }
+
+    fn search_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.set_height(34.0);
+            ui.add_space(10.0);
+            let before = self.search_q.clone();
+            ui.add(
+                egui::TextEdit::singleline(&mut self.search_q)
+                    .hint_text("搜索当前文件…")
+                    .desired_width(200.0)
+                    .font(FontId::proportional(11.5)),
+            );
+            let changed = self.search_q != before || self.search_cached.1 != self.rev;
+            if changed {
+                let text = self
+                    .cur
+                    .as_ref()
+                    .map(|c| c.text.clone())
+                    .unwrap_or_default();
+                self.search_hits = search_hits_of(&text, &self.search_q);
+                self.search_cached = (self.search_q.clone(), self.rev);
+                self.search_sel = 0;
+                self.scroll_to_hit();
+            }
+            ui.add_space(6.0);
+            let n = self.search_hits.len();
+            let label = if n == 0 {
+                "无结果".to_string()
+            } else {
+                format!("{}/{} 处", self.search_sel + 1, n)
+            };
+            ui.label(RichText::new(label).size(11.0).color(theme::muted()));
+            if ui
+                .add(egui::Button::new(RichText::new("↑").size(12.0)).frame(false).min_size(Vec2::new(22.0, 24.0)))
+                .clicked()
+            {
+                self.search_step(-1);
+            }
+            if ui
+                .add(egui::Button::new(RichText::new("↓").size(12.0)).frame(false).min_size(Vec2::new(22.0, 24.0)))
+                .clicked()
+            {
+                self.search_step(1);
+            }
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(8.0);
+                if ui
+                    .add(egui::Button::new(RichText::new("×").size(12.0)).frame(false).min_size(Vec2::new(22.0, 24.0)))
+                    .clicked()
+                {
+                    self.search = false;
+                }
+            });
+        });
+    }
+
     fn code(&mut self, ui: &mut egui::Ui) {
         let Some(c) = self.cur.as_ref() else { return };
         let (binary, is_md, preview, deleted, truncated, can_wrap, size, is_img) = (
@@ -1804,6 +1992,16 @@ impl App {
             self.image_view(ui);
             return;
         }
+        let hit_lines: Vec<usize> = if self.search {
+            self.search_hits.iter().map(|h| h.0).collect()
+        } else {
+            Vec::new()
+        };
+        let hit_cur = if self.search && !self.search_hits.is_empty() {
+            self.search_hits[self.search_sel].0
+        } else {
+            usize::MAX
+        };
         if binary {
             let msg = format!("二进制文件 · {}", fmt_size(size));
             let h = ui.available_height();
@@ -1934,6 +2132,31 @@ impl App {
                         };
                     let out = area.show(ui, |ui| {
                         ui.spacing_mut().item_spacing = Vec2::ZERO;
+                        if !hit_lines.is_empty() {
+                            let lh = theme::line_height();
+                            for li in &hit_lines {
+                                let y = 10.0 + *li as f32 * lh;
+                                ui.painter().rect_filled(
+                                    egui::Rect::from_min_size(
+                                        egui::pos2(0.0, y),
+                                        egui::vec2(4000.0, lh),
+                                    ),
+                                    0.0,
+                                    theme::brass().gamma_multiply(0.13),
+                                );
+                            }
+                            if hit_cur < usize::MAX {
+                                let y = 10.0 + hit_cur as f32 * lh;
+                                ui.painter().rect_filled(
+                                    egui::Rect::from_min_size(
+                                        egui::pos2(0.0, y),
+                                        egui::vec2(4000.0, lh),
+                                    ),
+                                    0.0,
+                                    theme::brass().gamma_multiply(0.22),
+                                );
+                            }
+                        }
                         ui.add(
                             egui::TextEdit::multiline(buf)
                                 .font(mono.clone())
@@ -1981,6 +2204,31 @@ impl App {
                     });
                     let out = area.show(ui, |ui| {
                         ui.spacing_mut().item_spacing = Vec2::ZERO;
+                        if !hit_lines.is_empty() {
+                            let lh = theme::line_height();
+                            for li in &hit_lines {
+                                let y = 10.0 + *li as f32 * lh;
+                                ui.painter().rect_filled(
+                                    egui::Rect::from_min_size(
+                                        egui::pos2(0.0, y),
+                                        egui::vec2(4000.0, lh),
+                                    ),
+                                    0.0,
+                                    theme::brass().gamma_multiply(0.13),
+                                );
+                            }
+                            if hit_cur < usize::MAX {
+                                let y = 10.0 + hit_cur as f32 * lh;
+                                ui.painter().rect_filled(
+                                    egui::Rect::from_min_size(
+                                        egui::pos2(0.0, y),
+                                        egui::vec2(4000.0, lh),
+                                    ),
+                                    0.0,
+                                    theme::brass().gamma_multiply(0.22),
+                                );
+                            }
+                        }
                         ui.add(
                             egui::TextEdit::multiline(&mut ro)
                                 .font(mono.clone())
@@ -2137,6 +2385,87 @@ impl App {
             if resp.is_none() {
                 self.confirm_del = false;
             }
+        }
+
+        if let Some((pos, path, is_dir)) = self.ctx_menu.clone() {
+            let root = self.root.clone();
+            egui::Area::new(egui::Id::new("ctx-mask"))
+                .order(egui::Order::Middle)
+                .fixed_pos(egui::pos2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    let r = ctx.screen_rect();
+                    ui.painter().rect_filled(r, 0.0, Color32::TRANSPARENT);
+                    let resp = ui.allocate_rect(r, Sense::click());
+                    if resp.clicked() || resp.secondary_clicked() {
+                        self.ctx_menu = None;
+                    }
+                });
+            egui::Area::new(egui::Id::new("ctx-menu"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(pos)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(theme::raise())
+                        .stroke(Stroke::new(1.0, theme::line2()))
+                        .rounding(8.0)
+                        .inner_margin(egui::Margin::same(6.0))
+                        .show(ui, |ui| {
+                            ui.set_width(200.0);
+                            let is_md_m = !is_dir &&
+                                self.git.files.get(&path).map(|v| v == "M").unwrap_or(false);
+                            let mut item = |ui: &mut egui::Ui, label: &str, enabled: bool| -> bool {
+                                if enabled {
+                                    ui.add(
+                                        egui::Button::new(
+                                            RichText::new(label).size(11.5).color(theme::text()),
+                                        )
+                                        .frame(false)
+                                        .min_size(Vec2::new(188.0, 26.0)),
+                                    )
+                                    .clicked()
+                                } else {
+                                    ui.label(RichText::new(label).size(11.5).color(theme::faint()));
+                                    false
+                                }
+                            };
+                            if !is_dir && item(ui, "打开", true) {
+                                self.open(&path);
+                                self.ctx_menu = None;
+                            }
+                            if is_dir && item(ui, "展开 / 折叠", true) {
+                                if let Some(r) = &root {
+                                    self.tree.toggle(r, &path);
+                                }
+                                self.ctx_menu = None;
+                            }
+                            if item(ui, "复制路径", true) {
+                                ctx.copy_text(path.clone());
+                                self.toast("路径已复制");
+                                self.ctx_menu = None;
+                            }
+                            if item(ui, "在资源管理器中显示", true) {
+                                if let Some(r) = &root {
+                                    reveal_in_explorer(r, &path);
+                                }
+                                self.ctx_menu = None;
+                            }
+                            if is_md_m && item(ui, "撤销未提交更改", true) {
+                                if let Some(r) = &root {
+                                    match gitops::discard(r, &path) {
+                                        Ok(s) => {
+                                            self.toast(s);
+                                            self.refresh_git(true);
+                                            if self.cur.as_ref().map(|c| c.path == path).unwrap_or(false) {
+                                                self.open(&path);
+                                            }
+                                        }
+                                        Err(e) => self.toast(e),
+                                    }
+                                }
+                                self.ctx_menu = None;
+                            }
+                        });
+                });
         }
 
         if self.branch_menu {
@@ -2327,6 +2656,20 @@ impl App {
         if cmd && ctx.input(|i| i.key_pressed(egui::Key::S)) {
             self.save_cur();
         }
+        if cmd && ctx.input(|i| i.key_pressed(egui::Key::F)) && self.cur.is_some() && !self.palette {
+            self.search = !self.search;
+            self.search_sel = 0;
+        }
+        if self.search && self.cur.is_some() {
+            let down = ctx.input(|i| i.key_pressed(egui::Key::F3))
+                || (cmd && ctx.input(|i| i.key_pressed(egui::Key::Enter)));
+            let up = ctx.input(|i| i.modifiers.shift && i.key_pressed(egui::Key::F3));
+            if down { self.search_step(1); }
+            if up { self.search_step(-1); }
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.search = false;
+            }
+        }
         if cmd && ctx.input(|i| i.key_pressed(egui::Key::P)) && !self.palette {
             if !self.conf.projects.is_empty() {
                 self.ensure_files();
@@ -2394,7 +2737,17 @@ impl eframe::App for App {
                 .collect()
         });
         for p in dropped {
-            if p.is_dir() {
+            if p.is_file() {
+                if let Some(root) = &self.root {
+                    match p.strip_prefix(root) {
+                        Ok(rel) => {
+                            let rel = rel.to_string_lossy().replace('\\', "/");
+                            self.open(&rel);
+                        }
+                        Err(_) => self.toast("文件不在当前项目内，请先打开其所在目录"),
+                    }
+                }
+            } else if p.is_dir() {
                 let s = p.to_string_lossy().to_string();
                 if let Ok(i) = conf::add(&mut self.conf, &s) {
                     self.conf.active = i;
@@ -2956,4 +3309,41 @@ fn icon_theme(ui: &mut egui::Ui, night: bool) -> egui::Response {
         p.circle_filled(c, 4.5, theme::brass());
     }
     resp
+}
+
+fn search_hits_of(text: &str, q: &str) -> Vec<(usize, usize, usize)> {
+    let mut out = Vec::new();
+    if q.is_empty() {
+        return out;
+    }
+    let ql = q.to_lowercase();
+    for (li, line) in text.split('\n').enumerate() {
+        let ll = line.to_lowercase();
+        let mut from = 0usize;
+        while let Some(p) = ll[from..].find(&ql) {
+            let s = from + p;
+            out.push((li, s, s + ql.len()));
+            from = s + ql.len();
+        }
+    }
+    out
+}
+
+fn reveal_in_explorer(root: &Path, rel: &str) {
+    let full = root.join(rel);
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("explorer")
+            .arg(format!("/select,{}", full.display()))
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg("-R").arg(&full).spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let dir = full.parent().map(|p| p.to_path_buf()).unwrap_or(full.clone());
+        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+    }
 }

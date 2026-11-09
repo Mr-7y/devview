@@ -24,8 +24,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>DevView</string>
     <key>CFBundleDisplayName</key><string>DevView</string>
     <key>CFBundleIdentifier</key><string>com.devview.app</string>
-    <key>CFBundleVersion</key><string>1.1.0</string>
-    <key>CFBundleShortVersionString</key><string>1.1.0</string>
+    <key>CFBundleVersion</key><string>1.2.0</string>
+    <key>CFBundleShortVersionString</key><string>1.2.0</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleExecutable</key><string>DevView</string>
     <key>CFBundleIconFile</key><string>icon.icns</string>

@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-DevView 是一个极简的只读代码浏览器：打开本地目录 → 树形浏览 → 语法高亮 → git 变更标记 → 单文件 diff。
+DevView 是一个极简的代码浏览器：打开本地目录 → 树形浏览 → 语法高亮 → Markdown 预览 → git 变更标记 → 单文件 diff。代码只读，Markdown 可编辑；夜航 / 日纸双主题，左右侧栏可独立收合。
 
 技术形态是**纯 Rust + egui**，没有 WebView、没有 Electron、没有 Python 运行时，release 单文件约 4.6 MB。目标场景是"看代码"而不是编辑代码，因此所有设计都围绕启动快、体积小、内存低展开。
 
@@ -37,8 +37,9 @@ CI 只执行构建，不跑 fmt/clippy。代码库没有 rustfmt 配置，且存
 | 文件 | 职责 |
 |---|---|
 | `src/main.rs` | 窗口创建、命令行参数（过滤 `-` 开头的参数）、Glow 渲染器、内嵌窗口图标 |
-| `src/app.rs` | 全部界面与状态：顶栏 / 侧栏树 / 变更列表 / 代码区 / 状态栏 / 命令面板 / toast / 拖放 |
-| `src/theme.rs` | 颜色常量、系统字体探测、egui Visuals 与 Style |
+| `src/app.rs` | 全部界面与状态：顶栏 / git 工作流带 / 可折叠双侧栏 / 树 / 变更列表 / 代码区 / 状态栏 / 命令面板 / toast / 拖放 |
+| `src/theme.rs` | 双主题颜色函数、系统字体探测、egui Visuals 与 Style |
+| `src/md.rs` | Markdown 块级解析与预览渲染（标题 / 列表 / 引用 / 围栏代码 / 表格） |
 | `src/tree.rs` | 懒加载目录树，`flatten()` 输出带 depth 的行用于渲染 |
 | `src/fsops.rs` | 路径安全校验、目录/文件读取、语言识别、自然排序、全量文件名索引 |
 | `src/gitops.rs` | 子进程调用 git status/diff，带超时与 3 秒缓存 |
@@ -51,7 +52,7 @@ CI 只执行构建，不跑 fmt/clippy。代码库没有 rustfmt 配置，且存
 
 改动前请先确认不违反以下几条，它们决定了这个项目能不能继续"小"：
 
-1. **只读**。`RoBuf` 实现了 `egui::TextBuffer` 且 `is_mutable() == false`，代码区不可编辑。不要为了加编辑功能而放开它——egui 自带的多行编辑撑不住十万行文件。
+1. **代码只读，Markdown 例外**。源码用 `RoBuf`（`is_mutable() == false`）挡住编辑；只有 `.md` 文件切到源码模式时走真实 `String`，保存经 `fsops::write_file`（同样过 `safe_join`）。不要把编辑放开到其它文件——egui 自带的多行编辑撑不住十万行文件。
 2. **不引入重量级依赖**。禁止 WebView、HTTP 客户端、异步运行时、图片/字体编解码库。现有依赖只有 eframe/egui、serde、serde_json、dirs、dunce、rfd。
 3. **所有 IO 必须有界**。git 是同步子进程 + `try_wait` 轮询超时（status 8s、branch 4s、diff 8s），文件读取有 2 MB 上限，文件名索引遍历有 2 万条上限。新增 IO 必须同样带上限，否则会直接卡住 UI 线程。
 4. **路径必须过安全校验**。任何来自 UI 的相对路径都走 `fsops::safe_join`：拒绝 `..` 段，canonicalize 后必须 `starts_with(root)`。
@@ -76,7 +77,8 @@ CI 只执行构建，不跑 fmt/clippy。代码库没有 rustfmt 配置，且存
 
 ## 缓存与失效
 
-- **git 状态**：`gitops::status` 按项目根路径缓存 3 秒；`force = true` 跳过缓存。`App` 在窗口有焦点时每 5 秒刷新一次，F5 强制刷新。
+- **git 状态**：`gitops::status` 按项目根路径缓存 3 秒；`force = true` 跳过缓存。
+- **Markdown 块**：`Cur::blocks` 在文件打开与文本变化时重建，预览渲染直接复用，不逐帧解析。`App` 在窗口有焦点时每 5 秒刷新一次，F5 强制刷新。
 - **galley 缓存**：`GalleyCache` 以 `(rev, 宽度 w)` 命中。任何导致文本、diff 模式、文件、换行开关变化的操作都必须 `self.rev += 1`，否则会显示旧内容。
 - **目录树**：懒加载，`kids == None` 表示该目录还没读过磁盘；`reload` 只重读根层。
 - **文件名索引**：首次打开「变更」tab 或首次 Ctrl+P 时才全量遍历并缓存（`files_loaded`）。
@@ -129,5 +131,5 @@ Conventional Commits，描述用中文：`feat: 增加变更视图分组`、`fix
 
 - 单文件渲染上限 256 KB，超出截断并提示，这是排版缓存的成本取舍。
 - 大仓库（> 10 万文件）首次 `git status` 会有 1~2 秒延迟，之后走缓存。
-- 只读，不支持编辑与保存。
+- 代码只读，只有 Markdown 可编辑并保存。
 - 三平台字形略有差异，属系统字体方案的固有代价。

@@ -10,6 +10,9 @@ mod syntax;
 mod theme;
 mod tree;
 
+#[cfg(debug_assertions)]
+mod shot;
+
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args()
         .skip(1)

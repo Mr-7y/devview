@@ -149,6 +149,11 @@ impl App {
             title_dirty: false,
         };
         app.load_project();
+        if let Ok(rel) = std::env::var("AI_VIEW_OPEN") {
+            if !rel.is_empty() {
+                app.open(&rel);
+            }
+        }
         app
     }
 
@@ -1272,11 +1277,13 @@ impl App {
         ui.add_space(8.0);
         rule(ui, 10.0);
         ui.add_space(10.0);
-        match self.rtab {
-            0 => self.right_appearance(ui),
-            1 => self.right_changes(ui),
-            _ => self.right_info(ui),
-        }
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| match self.rtab {
+                0 => self.right_appearance(ui),
+                1 => self.right_changes(ui),
+                _ => self.right_info(ui),
+            });
     }
 
     fn right_appearance(&mut self, ui: &mut egui::Ui) {

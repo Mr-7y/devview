@@ -301,6 +301,7 @@ pub fn setup(ctx: &egui::Context) {
             .push(name.to_owned());
     }
     ctx.set_fonts(fonts);
+    ctx.options_mut(|o| o.warn_on_id_clash = false);
     apply(ctx);
 }
 

@@ -21,7 +21,7 @@ fn main() -> eframe::Result<()> {
 
     let mut opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1360.0, 860.0])
+            .with_inner_size([1360.0, 760.0])
             .with_min_inner_size([760.0, 460.0])
             .with_title("Ai-View")
             .with_decorations(false)

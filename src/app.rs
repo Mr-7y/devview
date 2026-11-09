@@ -1,5 +1,6 @@
-use crate::{conf, fsops, gitops, syntax, theme, tree};
-use egui::{Align2, Color32, FontId, RichText, Sense, Stroke, Vec2};
+use crate::{conf, fsops, gitops, md, syntax, theme, tree};
+use egui::text::{LayoutJob, TextFormat};
+use egui::{Align, Align2, Color32, FontId, RichText, Sense, Stroke, Vec2};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -8,9 +9,12 @@ use std::time::{Duration, Instant};
 
 const MAX_VIEW: u64 = 256 * 1024;
 const WRAP_LIMIT: usize = 160 * 1024;
-const ROW_H: f32 = 22.0;
-
-/* ---------------------------------------------------------------- 只读缓冲 */
+const ROW_H: f32 = 24.0;
+const TOP_H: f32 = 54.0;
+const GIT_H: f32 = 60.0;
+const STATUS_H: f32 = 28.0;
+const LEFT_W: f32 = 252.0;
+const RIGHT_W: f32 = 296.0;
 
 struct RoBuf<'a>(&'a str);
 
@@ -27,8 +31,6 @@ impl egui::TextBuffer for RoBuf<'_> {
     fn delete_char_range(&mut self, _char_range: std::ops::Range<usize>) {}
 }
 
-/* ---------------------------------------------------------------- 当前文件 */
-
 pub struct Cur {
     pub path: String,
     pub name: String,
@@ -37,22 +39,18 @@ pub struct Cur {
     lines: Vec<syntax::Line>,
     diff_lines: Vec<syntax::Line>,
     gutter: String,
+    diff_gutter: String,
     size: u64,
     binary: bool,
     truncated: bool,
     deleted: bool,
     digits: usize,
+    gen_lines: usize,
     can_wrap: bool,
-}
-
-impl Cur {
-    fn view(&self, diff: bool) -> (&str, &[syntax::Line]) {
-        if diff {
-            (&self.diff_text, &self.diff_lines)
-        } else {
-            (&self.text, &self.lines)
-        }
-    }
+    is_md: bool,
+    preview: bool,
+    dirty: bool,
+    blocks: Vec<md::Block>,
 }
 
 struct GalleyCache {
@@ -60,8 +58,6 @@ struct GalleyCache {
     w: f32,
     galley: Arc<egui::Galley>,
 }
-
-/* ---------------------------------------------------------------- App */
 
 pub struct App {
     conf: conf::Conf,
@@ -79,6 +75,10 @@ pub struct App {
     wrap: bool,
     diff_mode: bool,
     scroll_y: f32,
+
+    left_open: bool,
+    right_open: bool,
+    commit_msg: String,
 
     files: Vec<String>,
     files_loaded: bool,
@@ -124,6 +124,9 @@ impl App {
             wrap: false,
             diff_mode: false,
             scroll_y: 0.0,
+            left_open: true,
+            right_open: true,
+            commit_msg: String::new(),
             files: Vec::new(),
             files_loaded: false,
             palette: false,
@@ -139,8 +142,6 @@ impl App {
         app.load_project();
         app
     }
-
-    /* ------------------------------------------------ 项目 */
 
     fn load_project(&mut self) {
         self.cur = None;
@@ -218,8 +219,6 @@ impl App {
         self.toast_at = Instant::now();
     }
 
-    /* ------------------------------------------------ 打开文件 */
-
     fn open(&mut self, rel: &str) {
         let Some(root) = self.root.clone() else { return };
         if self.cur.as_ref().map(|c| c.path == rel && !c.deleted).unwrap_or(false) {
@@ -243,32 +242,42 @@ impl App {
                     text.truncate(cut);
                     truncated = true;
                 }
-                let lines = syntax::tokenize(&text, &f.lang);
+                let lang = f.lang.clone();
+                let lines = syntax::tokenize(&text, &lang);
                 let n = lines.len().max(1);
                 let can_wrap = text.len() < WRAP_LIMIT;
                 let gutter = (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+                let is_md = lang == "markdown";
+                let blocks = if is_md { md::parse(&text) } else { Vec::new() };
                 if !can_wrap {
                     self.wrap = false;
                 }
+                let name = rel.rsplit('/').next().unwrap_or(rel).to_string();
                 self.cur = Some(Cur {
                     path: rel.to_string(),
-                    name: rel.rsplit('/').next().unwrap_or(rel).to_string(),
+                    name: name.clone(),
                     text,
                     diff_text: String::new(),
                     lines,
                     diff_lines: Vec::new(),
                     gutter,
+                    diff_gutter: String::new(),
                     size: f.size,
                     binary: f.binary,
                     truncated,
                     deleted: false,
                     digits: n.to_string().len(),
+                    gen_lines: n,
                     can_wrap,
+                    is_md,
+                    preview: is_md,
+                    dirty: false,
+                    blocks,
                 });
                 self.diff_mode = false;
                 self.scroll_y = 0.0;
                 self.rev += 1;
-                self.title = format!("{} — DevView", rel.rsplit('/').next().unwrap_or(rel));
+                self.title = format!("{} — DevView", name);
                 self.title_dirty = true;
             }
             Err(e) => self.toast(e),
@@ -286,53 +295,107 @@ impl App {
         let lines = syntax::tokenize(&d, "diff");
         let n = lines.len().max(1);
         let gutter = (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        let name = rel.rsplit('/').next().unwrap_or(rel).to_string();
         self.cur = Some(Cur {
             path: rel.to_string(),
-            name: rel.rsplit('/').next().unwrap_or(rel).to_string(),
+            name: name.clone(),
             text: String::new(),
             diff_text: d,
             lines: Vec::new(),
             diff_lines: lines,
-            gutter,
+            gutter: String::new(),
+            diff_gutter: gutter,
             size: 0,
             binary: false,
             truncated: false,
             deleted: true,
             digits: n.to_string().len(),
+            gen_lines: n,
             can_wrap: true,
+            is_md: false,
+            preview: false,
+            dirty: false,
+            blocks: Vec::new(),
         });
         self.diff_mode = true;
         self.scroll_y = 0.0;
         self.rev += 1;
-        self.title = format!("{} (已删除) — DevView", rel.rsplit('/').next().unwrap_or(rel));
+        self.title = format!("{} (已删除) — DevView", name);
         self.title_dirty = true;
     }
 
     fn toggle_diff(&mut self) {
-        let Some(cur) = self.cur.as_mut() else { return };
-        if cur.deleted || cur.binary {
-            return;
+        if let Some(cur) = self.cur.as_ref() {
+            if cur.deleted || cur.binary {
+                return;
+            }
         }
         if self.diff_mode {
             self.diff_mode = false;
-        } else {
-            let Some(root) = self.root.clone() else { return };
-            let state = self.git.files.get(&cur.path).cloned();
-            let full = root.join(&cur.path);
-            let (d, _) = gitops::diff(&root, &cur.path, &full, state.as_deref());
-            if d.trim().is_empty() {
-                self.toast("该文件没有未提交的改动");
-                return;
-            }
-            cur.diff_text = d;
-            cur.diff_lines = syntax::tokenize(&cur.diff_text, "diff");
-            self.diff_mode = true;
+            self.scroll_y = 0.0;
+            self.rev += 1;
+            return;
         }
+        let Some(root) = self.root.clone() else { return };
+        let p = match self.cur.as_ref() {
+            Some(c) => c.path.clone(),
+            None => return,
+        };
+        let state = self.git.files.get(&p).cloned();
+        let full = root.join(&p);
+        let (d, _) = gitops::diff(&root, &p, &full, state.as_deref());
+        if d.trim().is_empty() {
+            self.toast("该文件没有未提交的改动");
+            return;
+        }
+        let lines = syntax::tokenize(&d, "diff");
+        let n = lines.len().max(1);
+        let gutter = (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        if let Some(cur) = self.cur.as_mut() {
+            cur.diff_text = d;
+            cur.diff_lines = lines;
+            cur.diff_gutter = gutter;
+        }
+        self.diff_mode = true;
         self.scroll_y = 0.0;
         self.rev += 1;
     }
 
-    /* ------------------------------------------------ 文件索引 */
+    fn rebuild(&mut self) {
+        let Some(cur) = self.cur.as_mut() else { return };
+        let lang = fsops::detect_lang(&cur.path);
+        cur.lines = syntax::tokenize(&cur.text, lang);
+        if cur.is_md {
+            cur.blocks = md::parse(&cur.text);
+        }
+        let n = cur.lines.len().max(1);
+        cur.gutter = (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        cur.digits = n.to_string().len();
+        cur.gen_lines = n;
+        self.rev += 1;
+    }
+
+    fn save_cur(&mut self) {
+        let Some(root) = self.root.clone() else { return };
+        let res = {
+            let Some(cur) = self.cur.as_ref() else { return };
+            if !cur.is_md || cur.deleted || cur.binary {
+                return;
+            }
+            fsops::write_file(&root, &cur.path, &cur.text)
+        };
+        match res {
+            Ok(n) => {
+                if let Some(cur) = self.cur.as_mut() {
+                    cur.dirty = false;
+                    cur.size = n;
+                }
+                self.refresh_git(true);
+                self.toast("已保存");
+            }
+            Err(e) => self.toast(e),
+        }
+    }
 
     fn ensure_files(&mut self) {
         if self.files_loaded {
@@ -345,197 +408,389 @@ impl App {
         }
     }
 
-    /* ------------------------------------------------ 顶部栏 */
-
     fn topbar(&mut self, ctx: &egui::Context) {
         let frame = egui::Frame::none()
-            .fill(theme::TOP)
+            .fill(theme::panel())
             .inner_margin(egui::Margin {
-                left: 10.0,
-                right: 8.0,
-                top: 6.0,
-                bottom: 6.0,
+                left: 14.0,
+                right: 14.0,
+                top: 0.0,
+                bottom: 0.0,
             });
         egui::TopBottomPanel::top("top")
-            .exact_height(36.0)
+            .exact_height(TOP_H)
             .frame(frame)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    logo(ui);
-                    ui.label(RichText::new("DevView").size(12.5).color(theme::FG).strong());
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    logo(ui, 24.0);
+                    brand(ui);
+                    ui.add_space(4.0);
 
-                    ui.add_space(6.0);
+                    self.project_pill(ui);
+                    ui.add_space(2.0);
 
-                    let cur_name = self
-                        .conf
-                        .projects
-                        .get(self.conf.active)
-                        .map(|p| p.name.clone())
-                        .unwrap_or_else(|| "未打开项目".into());
-
-                    let mut pick: Option<usize> = None;
-                    egui::ComboBox::from_id_salt("proj")
-                        .width(150.0)
-                        .selected_text(RichText::new(cur_name).size(12.0))
-                        .show_ui(ui, |ui| {
-                            for (i, p) in self.conf.projects.iter().enumerate() {
-                                if ui
-                                    .selectable_label(i == self.conf.active, p.name.as_str())
-                                    .clicked()
-                                {
-                                    pick = Some(i);
-                                }
+                    let cmd_w = (ui.available_width() - 330.0).max(120.0);
+                    let mut open_palette = false;
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(cmd_w, 32.0),
+                        egui::Layout::left_to_right(Align::Center),
+                        |ui| {
+                            if cmd_bar(ui, ui.available_width()) {
+                                open_palette = true;
                             }
-                            if self.conf.projects.is_empty() {
-                                ui.label(RichText::new("还没有项目").size(12.0).color(theme::DIM));
-                            }
-                        });
-                    if let Some(i) = pick {
-                        if i != self.conf.active {
-                            self.conf.active = i;
-                            let _ = conf::save(&self.conf);
-                            self.load_project();
-                        }
+                        },
+                    );
+                    if open_palette {
+                        self.ensure_files();
+                        self.palette = true;
+                        self.pal_q.clear();
+                        self.pal_sel = 0;
                     }
 
-                    if ui.button(RichText::new("＋").size(13.0)).on_hover_text("添加项目目录").clicked() {
-                        self.add_project();
-                    }
-                    if !self.conf.projects.is_empty()
-                        && ui
-                            .button(RichText::new("−").size(13.0))
-                            .on_hover_text("从列表移除（不删磁盘文件）")
-                            .clicked()
-                    {
-                        self.confirm_del = true;
-                    }
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(4.0);
-                        let has_file = self
-                            .cur
-                            .as_ref()
-                            .map(|c| !c.binary && !c.deleted)
-                            .unwrap_or(false);
-                        let changed = self
-                            .cur
-                            .as_ref()
-                            .map(|c| self.git.files.contains_key(&c.path))
-                            .unwrap_or(false);
-
-                        if ui
-                            .add_enabled(
-                                has_file && changed,
-                                egui::Button::new(RichText::new("Diff").size(12.0))
-                                    .min_size(Vec2::new(46.0, 22.0))
-                                    .selected(self.diff_mode),
-                            )
-                            .on_hover_text("查看该文件的未提交改动")
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        avatar(ui);
+                        ui.add_space(2.0);
+                        if icon_btn(ui, if self.right_open { "◨" } else { "◧" }, self.right_open)
+                            .on_hover_text("右栏")
                             .clicked()
                         {
-                            self.toggle_diff();
+                            self.right_open = !self.right_open;
                         }
-                        let can_wrap = self.cur.as_ref().map(|c| c.can_wrap).unwrap_or(true);
-                        let w = ui
-                            .add_enabled(
-                                can_wrap,
-                                egui::Button::new(RichText::new("折行").size(11.5))
-                                    .min_size(Vec2::new(40.0, 22.0))
-                                    .selected(self.wrap),
-                            )
-                            .on_hover_text(if can_wrap {
-                                "长行自动换行"
-                            } else {
-                                "文件过大，已禁用折行"
-                            });
-                        if w.clicked() {
-                            self.wrap = !self.wrap;
+                        if icon_btn(ui, if self.left_open { "◧" } else { "◨" }, self.left_open)
+                            .on_hover_text("左栏")
+                            .clicked()
+                        {
+                            self.left_open = !self.left_open;
+                        }
+                        let both = self.left_open && self.right_open;
+                        if icon_btn(ui, "▣", both)
+                            .on_hover_text("两侧栏一起收起 / 展开")
+                            .clicked()
+                        {
+                            self.left_open = !both;
+                            self.right_open = !both;
+                        }
+                        ui.add_space(2.0);
+                        let night = !theme::light();
+                        if icon_btn(ui, if night { "☾" } else { "☀" }, false)
+                            .on_hover_text(if night { "切到日纸" } else { "切到夜航" })
+                            .clicked()
+                        {
+                            theme::toggle();
+                            theme::apply(ctx);
                             self.rev += 1;
                         }
-                        if !self.conf.projects.is_empty() {
-                            if let Some(p) = self.conf.projects.get(self.conf.active) {
-                                ui.label(
-                                    RichText::new(short_path(&p.path))
-                                        .size(10.5)
-                                        .color(theme::FAINT),
-                                );
-                            }
+                        ui.add_space(6.0);
+                    });
+                });
+            });
+    }
+
+    fn project_pill(&mut self, ui: &mut egui::Ui) {
+        let cur_name = self
+            .conf
+            .projects
+            .get(self.conf.active)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "未打开项目".into());
+        let branch = if self.git.is_git && !self.git.branch.is_empty() {
+            self.git.branch.clone()
+        } else {
+            String::new()
+        };
+
+        let mut pick: Option<usize> = None;
+        egui::ComboBox::from_id_salt("proj")
+            .width(150.0)
+            .selected_text(RichText::new(cur_name).size(11.5))
+            .show_ui(ui, |ui| {
+                for (i, p) in self.conf.projects.iter().enumerate() {
+                    if ui
+                        .selectable_label(i == self.conf.active, p.name.as_str())
+                        .clicked()
+                    {
+                        pick = Some(i);
+                    }
+                }
+                if self.conf.projects.is_empty() {
+                    ui.label(RichText::new("还没有项目").size(11.5).color(theme::muted()));
+                }
+                ui.separator();
+                if ui.label(RichText::new("＋ 添加目录…").size(11.5)).clicked() {
+                    pick = Some(usize::MAX);
+                }
+            });
+        if let Some(i) = pick {
+            if i == usize::MAX {
+                self.add_project();
+            } else if i != self.conf.active {
+                self.conf.active = i;
+                let _ = conf::save(&self.conf);
+                self.load_project();
+            }
+        }
+        if !branch.is_empty() {
+            ui.label(RichText::new(branch).size(10.0).color(theme::faint()).monospace());
+        }
+    }
+
+    fn gitbar(&mut self, ctx: &egui::Context) {
+        let frame = egui::Frame::none()
+            .fill(theme::bg2())
+            .inner_margin(egui::Margin {
+                left: 14.0,
+                right: 14.0,
+                top: 0.0,
+                bottom: 0.0,
+            });
+        egui::TopBottomPanel::top("gitbar")
+            .exact_height(GIT_H)
+            .frame(frame)
+            .show(ctx, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let branch = if self.git.branch.is_empty() {
+                        "-".to_string()
+                    } else {
+                        self.git.branch.clone()
+                    };
+                    pill(ui, "⑂", &branch);
+                    let remote = if self.git.remote.is_empty() {
+                        "-".to_string()
+                    } else {
+                        self.git.remote.clone()
+                    };
+                    pill(ui, "☁", &remote);
+                    ui.label(
+                        RichText::new(format!("↑ {}", self.git.ahead))
+                            .size(10.5)
+                            .color(theme::brass())
+                            .monospace(),
+                    );
+                    ui.label(
+                        RichText::new(format!("↓ {}", self.git.behind))
+                            .size(10.5)
+                            .color(theme::muted())
+                            .monospace(),
+                    );
+
+                    ui.add_space(4.0);
+                    graph(ui, self.git.ahead, self.git.behind);
+                    ui.add_space(4.0);
+
+                    let input_w = (ui.available_width() - 250.0).max(120.0);
+                    let te = egui::TextEdit::singleline(&mut self.commit_msg)
+                        .hint_text("描述这次改动")
+                        .desired_width(input_w)
+                        .margin(egui::Margin::symmetric(9.0, 6.0));
+                    ui.add(te);
+
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        let can = !self.commit_msg.trim().is_empty() && !self.git.files.is_empty();
+                        let b =
+                            egui::Button::new(RichText::new("提交").size(11.5).color(theme::on_brass()))
+                                .fill(theme::brass())
+                                .rounding(7.0)
+                                .min_size(Vec2::new(52.0, 26.0));
+                        if ui.add_enabled(can, b).clicked() {
+                            self.do_commit();
+                        }
+                        if ghost(ui, "推送").clicked() {
+                            self.do_push();
+                        }
+                        if ghost(ui, "拉取").clicked() {
+                            self.do_pull();
                         }
                     });
                 });
             });
     }
 
-    /* ------------------------------------------------ 侧栏 */
-
-    fn sidebar(&mut self, ctx: &egui::Context) {
-        let frame = egui::Frame::none().fill(theme::SIDE);
-        egui::SidePanel::left("side")
-            .default_width(238.0)
-            .width_range(160.0..=520.0)
-            .frame(frame)
-            .show(ctx, |ui| {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 5.0;
-                    ui.add_space(5.0);
-                    let n = self.git.files.len();
-                    if self.tab_btn(ui, "文件", self.tab == 0) {
-                        self.tab = 0;
-                    }
-                    let label = if n > 0 {
-                        format!("变更  {}", n)
-                    } else {
-                        "变更".to_string()
-                    };
-                    if self.tab_btn(ui, &label, self.tab == 1) {
-                        self.tab = 1;
-                        self.ensure_files();
-                    }
-                });
-                ui.add_space(4.0);
-                ui.painter().hline(
-                    ui.max_rect().x_range(),
-                    ui.cursor().top(),
-                    Stroke::new(1.0, theme::LINE),
-                );
-                ui.add_space(3.0);
-
-                if self.tab == 0 {
-                    self.draw_tree(ui);
-                } else {
-                    self.draw_changes(ui);
-                }
-            });
+    fn do_commit(&mut self) {
+        let Some(root) = self.root.clone() else { return };
+        let msg = self.commit_msg.trim().to_string();
+        if msg.is_empty() {
+            self.toast("先写一句提交说明");
+            return;
+        }
+        gitops::invalidate(&root);
+        match gitops::commit(&root, &msg) {
+            Ok(s) => {
+                self.commit_msg.clear();
+                self.refresh_git(true);
+                self.toast(s);
+            }
+            Err(e) => self.toast(e),
+        }
     }
 
-    fn tab_btn(&self, ui: &mut egui::Ui, text: &str, on: bool) -> bool {
-        let color = if on { theme::FG } else { theme::DIM };
-        let btn = egui::Button::new(RichText::new(text).size(11.5).color(color))
-            .frame(false)
-            .min_size(Vec2::new(0.0, 22.0));
-        let r = ui.add(btn);
-        if on {
-            let rect = r.rect;
-            ui.painter().rect_filled(
-                egui::Rect::from_min_max(
-                    egui::pos2(rect.left() + 2.0, rect.bottom() + 1.0),
-                    egui::pos2(rect.right() - 2.0, rect.bottom() + 2.0),
-                ),
-                0.0,
-                theme::ACCENT,
-            );
+    fn do_pull(&mut self) {
+        let Some(root) = self.root.clone() else { return };
+        gitops::invalidate(&root);
+        match gitops::pull(&root) {
+            Ok(s) => {
+                self.refresh_git(true);
+                if let Some(r) = self.root.clone() {
+                    self.tree.reload(&r);
+                }
+                self.toast(s);
+            }
+            Err(e) => self.toast(e),
         }
-        r.clicked()
+    }
+
+    fn do_push(&mut self) {
+        let Some(root) = self.root.clone() else { return };
+        match gitops::push(&root) {
+            Ok(s) => {
+                self.refresh_git(true);
+                self.toast(s);
+            }
+            Err(e) => self.toast(e),
+        }
+    }
+
+    fn side_panels(&mut self, ctx: &egui::Context) {
+        if self.left_open {
+            egui::SidePanel::left("side")
+                .resizable(true)
+                .default_width(LEFT_W)
+                .width_range(196.0..=430.0)
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::panel())
+                        .inner_margin(egui::Margin::ZERO),
+                )
+                .show_separator_line(false)
+                .show(ctx, |ui| {
+                    let r = ui.max_rect();
+                    ui.painter()
+                        .vline(r.right(), r.y_range(), Stroke::new(1.0, theme::line()));
+                    self.sidebar_ui(ui);
+                });
+        } else {
+            egui::SidePanel::left("side-stub")
+                .exact_width(24.0)
+                .resizable(false)
+                .frame(egui::Frame::none().fill(theme::panel2()))
+                .show_separator_line(false)
+                .show(ctx, |ui| {
+                    ui.add_space(8.0);
+                    ui.vertical_centered(|ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("›").size(15.0).color(theme::muted()),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text("展开左栏")
+                            .clicked()
+                        {
+                            self.left_open = true;
+                        }
+                    });
+                });
+        }
+
+        if self.right_open {
+            egui::SidePanel::right("right")
+                .resizable(true)
+                .default_width(RIGHT_W)
+                .width_range(220.0..=420.0)
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::panel())
+                        .inner_margin(egui::Margin::ZERO),
+                )
+                .show_separator_line(false)
+                .show(ctx, |ui| {
+                    let r = ui.max_rect();
+                    ui.painter()
+                        .vline(r.left(), r.y_range(), Stroke::new(1.0, theme::line()));
+                    self.right_ui(ui);
+                });
+        } else {
+            egui::SidePanel::right("right-stub")
+                .exact_width(24.0)
+                .resizable(false)
+                .frame(egui::Frame::none().fill(theme::panel2()))
+                .show_separator_line(false)
+                .show(ctx, |ui| {
+                    ui.add_space(8.0);
+                    ui.vertical_centered(|ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("‹").size(15.0).color(theme::muted()),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text("展开右栏")
+                            .clicked()
+                        {
+                            self.right_open = true;
+                        }
+                    });
+                });
+        }
+    }
+
+    fn sidebar_ui(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            ui.add_space(12.0);
+            let n = self.git.files.len();
+            if tab_btn(ui, "文件", self.tab == 0) {
+                self.tab = 0;
+            }
+            let label = if n > 0 {
+                format!("变更 {}", n)
+            } else {
+                "变更".to_string()
+            };
+            if tab_btn(ui, &label, self.tab == 1) {
+                self.tab = 1;
+                self.ensure_files();
+            }
+            if tab_btn(ui, "远程", self.tab == 2) {
+                self.tab = 2;
+            }
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(8.0);
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("«").size(13.0).color(theme::faint()))
+                            .frame(false),
+                    )
+                    .on_hover_text("收起左栏")
+                    .clicked()
+                {
+                    self.left_open = false;
+                }
+            });
+        });
+        ui.add_space(7.0);
+        let y = ui.cursor().top();
+        ui.painter()
+            .hline(ui.max_rect().x_range(), y, Stroke::new(1.0, theme::line()));
+        ui.add_space(5.0);
+
+        match self.tab {
+            0 => self.draw_tree(ui),
+            1 => self.draw_changes(ui),
+            _ => self.draw_remotes(ui),
+        }
     }
 
     fn draw_tree(&mut self, ui: &mut egui::Ui) {
         if self.conf.projects.is_empty() {
-            ui.add_space(16.0);
+            ui.add_space(18.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("还没有打开项目").size(12.5).color(theme::DIM));
-                ui.add_space(6.0);
+                ui.label(RichText::new("还没有打开项目").size(12.5).color(theme::muted()));
+                ui.add_space(8.0);
                 if ui.button("选择目录…").clicked() {
                     self.add_project();
                 }
@@ -545,7 +800,7 @@ impl App {
         if let Some(e) = &self.root_err {
             let e = e.clone();
             ui.add_space(10.0);
-            ui.label(RichText::new(e).size(11.5).color(theme::D));
+            ui.label(RichText::new(e).size(11.5).color(theme::rose()));
             return;
         }
 
@@ -571,58 +826,64 @@ impl App {
                         .unwrap_or(false);
                     let p = ui.painter();
                     if selected {
-                        p.rect_filled(rect, 0.0, theme::SEL);
+                        p.rect_filled(rect.shrink2(Vec2::new(6.0, 0.0)), 6.0, theme::sel());
+                        p.rect_filled(
+                            egui::Rect::from_min_size(rect.min, Vec2::new(2.0, ROW_H)),
+                            1.0,
+                            theme::brass(),
+                        );
                     } else if resp.hovered() {
-                        p.rect_filled(rect, 0.0, Color32::from_rgb(0x2f, 0x31, 0x33));
+                        p.rect_filled(rect.shrink2(Vec2::new(6.0, 0.0)), 6.0, theme::hover());
                     }
 
-                    let x = rect.left() + 8.0 + row.depth as f32 * 12.0;
+                    let x = rect.left() + 14.0 + row.depth as f32 * 13.0;
                     let mid = rect.center().y;
 
                     if row.dir {
-                        let c = egui::pos2(x + 5.0, mid);
+                        let c = egui::pos2(x + 4.0, mid);
                         let pts = if row.open {
                             vec![
-                                egui::pos2(c.x - 4.0, c.y - 2.0),
-                                egui::pos2(c.x + 4.0, c.y - 2.0),
-                                egui::pos2(c.x, c.y + 3.5),
+                                egui::pos2(c.x - 3.5, c.y - 1.5),
+                                egui::pos2(c.x + 3.5, c.y - 1.5),
+                                egui::pos2(c.x, c.y + 3.0),
                             ]
                         } else {
                             vec![
-                                egui::pos2(c.x - 2.0, c.y - 4.0),
-                                egui::pos2(c.x + 3.5, c.y),
-                                egui::pos2(c.x - 2.0, c.y + 4.0),
+                                egui::pos2(c.x - 1.5, c.y - 3.5),
+                                egui::pos2(c.x + 3.0, c.y),
+                                egui::pos2(c.x - 1.5, c.y + 3.5),
                             ]
                         };
-                        p.add(egui::Shape::convex_polygon(pts, theme::DIM, Stroke::NONE));
+                        p.add(egui::Shape::convex_polygon(pts, theme::faint(), Stroke::NONE));
                     }
 
-                    let nx = x + 13.0;
-                    let name_color = if row.dir { theme::FG } else { theme::FG };
+                    let nx = x + 12.0;
                     p.text(
                         egui::pos2(nx, mid),
                         Align2::LEFT_CENTER,
                         &row.name,
                         FontId::proportional(12.5),
-                        name_color,
+                        theme::text(),
                     );
 
-                    // git 标记
                     let mark = if row.dir {
                         if self.dirty_dirs.contains(&row.path) {
-                            Some(("•".to_string(), theme::M))
+                            Some(("•".to_string(), theme::brass()))
                         } else {
                             None
                         }
                     } else {
-                        self.git.files.get(&row.path).map(|s| (s.clone(), theme::git_color(s)))
+                        self.git
+                            .files
+                            .get(&row.path)
+                            .map(|s| (s.clone(), theme::git_color(s)))
                     };
                     if let Some((m, c)) = mark {
                         p.text(
-                            egui::pos2(rect.right() - 10.0, mid),
+                            egui::pos2(rect.right() - 14.0, mid),
                             Align2::RIGHT_CENTER,
                             m,
-                            FontId::proportional(10.5),
+                            FontId::monospace(10.0),
                             c,
                         );
                     }
@@ -647,18 +908,18 @@ impl App {
     fn draw_changes(&mut self, ui: &mut egui::Ui) {
         if self.root.is_none() {
             ui.add_space(14.0);
-            ui.label(RichText::new("没有可用项目").size(12.0).color(theme::FAINT));
+            ui.label(RichText::new("没有可用项目").size(12.0).color(theme::faint()));
             return;
         }
         if !self.git.is_git {
             ui.add_space(14.0);
-            ui.label(RichText::new("不是 git 仓库").size(12.0).color(theme::FAINT));
+            ui.label(RichText::new("不是 git 仓库").size(12.0).color(theme::faint()));
             return;
         }
         let files = &self.git.files;
         if files.is_empty() {
             ui.add_space(14.0);
-            ui.label(RichText::new("工作区干净，没有变更").size(12.0).color(theme::FAINT));
+            ui.label(RichText::new("工作区干净，没有变更").size(12.0).color(theme::faint()));
             return;
         }
 
@@ -667,7 +928,7 @@ impl App {
             ("已删除", &["D"]),
             ("未跟踪", &["U"]),
         ];
-        let mut items: Vec<(String, String, usize)> = Vec::new(); // path, state, group
+        let mut items: Vec<(String, String, usize)> = Vec::new();
         for (gi, (_, states)) in groups.iter().enumerate() {
             let mut list: Vec<(&String, &String)> = files
                 .iter()
@@ -691,12 +952,15 @@ impl App {
                         last_group = *gi;
                         let n = items.iter().filter(|x| x.2 == *gi).count();
                         ui.add_space(10.0);
-                        ui.label(
-                            RichText::new(format!("{}  {}", groups[*gi].0, n))
-                                .size(10.0)
-                                .color(Color32::from_rgb(0x84, 0x84, 0x84)),
-                        );
-                        ui.add_space(2.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(12.0);
+                            ui.label(
+                                RichText::new(format!("{} · {}", groups[*gi].0, n))
+                                    .size(9.5)
+                                    .color(theme::faint()),
+                            );
+                        });
+                        ui.add_space(3.0);
                     }
                     let full_w = ui.available_width();
                     let (rect, resp) =
@@ -704,15 +968,15 @@ impl App {
                     let selected = self.cur.as_ref().map(|c| c.path == *path).unwrap_or(false);
                     let p = ui.painter();
                     if selected {
-                        p.rect_filled(rect, 0.0, theme::SEL);
+                        p.rect_filled(rect.shrink2(Vec2::new(6.0, 0.0)), 6.0, theme::sel());
                     } else if resp.hovered() {
-                        p.rect_filled(rect, 0.0, theme::HOVER);
+                        p.rect_filled(rect.shrink2(Vec2::new(6.0, 0.0)), 6.0, theme::hover());
                     }
                     p.text(
-                        egui::pos2(rect.left() + 9.0, rect.center().y),
+                        egui::pos2(rect.left() + 15.0, rect.center().y),
                         Align2::LEFT_CENTER,
                         state,
-                        FontId::monospace(10.5),
+                        FontId::monospace(10.0),
                         theme::git_color(state),
                     );
                     let i = path.rfind('/');
@@ -720,35 +984,26 @@ impl App {
                         Some(k) => (&path[..k + 1], &path[k + 1..]),
                         None => ("", path.as_str()),
                     };
-                    let dim = egui::text::LayoutJob {
-                        text: format!("{}{}", dir, name),
-                        ..Default::default()
-                    };
-                    let _ = dim;
                     p.text(
-                        egui::pos2(rect.left() + 25.0, rect.center().y),
+                        egui::pos2(rect.left() + 30.0, rect.center().y),
                         Align2::LEFT_CENTER,
                         dir,
-                        FontId::proportional(11.0),
-                        theme::FAINT,
+                        FontId::proportional(10.5),
+                        theme::faint(),
                     );
                     let dx = if dir.is_empty() {
                         0.0
                     } else {
-                        p.layout_no_wrap(
-                            dir.to_string(),
-                            FontId::proportional(11.0),
-                            theme::FAINT,
-                        )
-                        .size()
-                        .x
+                        p.layout_no_wrap(dir.to_string(), FontId::proportional(10.5), theme::faint())
+                            .size()
+                            .x
                     };
                     p.text(
-                        egui::pos2(rect.left() + 25.0 + dx, rect.center().y),
+                        egui::pos2(rect.left() + 30.0 + dx, rect.center().y),
                         Align2::LEFT_CENTER,
                         name,
-                        FontId::proportional(12.5),
-                        theme::FG,
+                        FontId::proportional(12.0),
+                        theme::text(),
                     );
                     if resp.clicked() {
                         clicked = Some(path.clone());
@@ -762,27 +1017,195 @@ impl App {
         }
     }
 
-    /* ------------------------------------------------ 中央：标签 + 代码 */
+    fn draw_remotes(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(10.0);
+        if !self.git.is_git {
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.label(RichText::new("不是 git 仓库").size(12.0).color(theme::faint()));
+            });
+            return;
+        }
+        let remotes = if self.git.remote.is_empty() {
+            vec!["origin".to_string()]
+        } else {
+            vec![self.git.remote.clone()]
+        };
+        for name in remotes {
+            ui.add_space(4.0);
+            let branch = if self.git.branch.is_empty() {
+                "-".to_string()
+            } else {
+                self.git.branch.clone()
+            };
+            let (ahead, behind) = (self.git.ahead, self.git.behind);
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(&name).size(12.0).color(theme::text()).strong());
+                    ui.label(
+                        RichText::new(format!("{} · ↑{} ↓{}", branch, ahead, behind))
+                            .size(10.0)
+                            .color(theme::faint())
+                            .monospace(),
+                    );
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ghost(ui, "拉取").clicked() {
+                            self.do_pull();
+                        }
+                        if ghost(ui, "推送").clicked() {
+                            self.do_push();
+                        }
+                    });
+                });
+            });
+            ui.add_space(6.0);
+            rule(ui, 12.0);
+        }
+    }
+
+    fn right_ui(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.label(RichText::new("信息").size(11.5).color(theme::text()).strong());
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(10.0);
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("»").size(13.0).color(theme::faint()))
+                            .frame(false),
+                    )
+                    .on_hover_text("收起右栏")
+                    .clicked()
+                {
+                    self.right_open = false;
+                }
+            });
+        });
+        ui.add_space(8.0);
+        rule(ui, 14.0);
+        ui.add_space(10.0);
+
+        let info = self.cur.as_ref().map(|c| {
+            let lang = fsops::detect_lang(&c.path).to_string();
+            (
+                c.name.clone(),
+                c.path.clone(),
+                c.size,
+                c.lines.len(),
+                lang,
+                c.is_md,
+                c.preview,
+                c.dirty,
+                c.binary,
+            )
+        });
+
+        if let Some((name, path, size, lines, lang, is_md, preview, dirty, binary)) = info {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(&name).size(12.5).color(theme::text()).strong());
+                    if dirty {
+                        ui.label(RichText::new("有未保存改动").size(10.0).color(theme::brass()));
+                    }
+                    ui.add_space(2.0);
+                    ui.label(RichText::new(&path).size(9.5).color(theme::faint()));
+                });
+            });
+            ui.add_space(10.0);
+            kv(ui, "类型", if binary { "二进制" } else { lang.as_str() });
+            kv(ui, "体积", &fmt_size(size));
+            kv(ui, "行数", &lines.to_string());
+            if is_md {
+                kv(ui, "视图", if preview { "预览" } else { "源码" });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    if ghost(ui, if preview { "源码" } else { "预览" }).clicked() {
+                        if let Some(c) = self.cur.as_mut() {
+                            c.preview = !preview;
+                        }
+                        self.rev += 1;
+                    }
+                    if ghost(ui, "保存").clicked() {
+                        self.save_cur();
+                    }
+                });
+            }
+            ui.add_space(12.0);
+            rule(ui, 14.0);
+        } else {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.label(RichText::new("没有打开文件").size(11.5).color(theme::faint()));
+            });
+        }
+
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.label(RichText::new("外观").size(11.5).color(theme::text()).strong());
+        });
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            let night = !theme::light();
+            if seg(ui, "夜航", night).clicked() && !night {
+                theme::set_light(false);
+                theme::apply(ui.ctx());
+                self.rev += 1;
+            }
+            if seg(ui, "日纸", !night).clicked() && night {
+                theme::set_light(true);
+                theme::apply(ui.ctx());
+                self.rev += 1;
+            }
+        });
+        ui.add_space(14.0);
+        rule(ui, 14.0);
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.vertical(|ui| {
+                ui.label(
+                    RichText::new(format!("DevView {}", env!("CARGO_PKG_VERSION")))
+                        .size(10.5)
+                        .color(theme::muted()),
+                );
+                ui.label(
+                    RichText::new("只读浏览 · Markdown 可编辑")
+                        .size(9.5)
+                        .color(theme::faint()),
+                );
+                ui.label(RichText::new("作者 Mr.7y").size(9.5).color(theme::faint()));
+            });
+        });
+    }
 
     fn center(&mut self, ctx: &egui::Context) {
-        let frame = egui::Frame::none().fill(theme::BG);
+        let frame = egui::Frame::none()
+            .fill(theme::code_bg())
+            .inner_margin(egui::Margin::ZERO);
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             if self.conf.projects.is_empty() {
-                self.welcome(ui, "还没有打开项目", "点左上角的 ＋ 选择代码目录，或直接把文件夹拖进窗口。");
+                self.welcome(
+                    ui,
+                    "还没有打开项目",
+                    "点左上角选择代码目录，或直接把文件夹拖进窗口。",
+                );
                 return;
             }
             if self.cur.is_none() {
                 self.welcome(ui, "DevView", "从左侧选择一个文件开始阅读。");
                 return;
             }
-
             self.crumb(ui);
-            ui.painter().hline(
-                ui.max_rect().x_range(),
-                ui.cursor().top(),
-                Stroke::new(1.0, theme::LINE),
-            );
-            ui.add_space(1.0);
+            let y = ui.cursor().top();
+            ui.painter()
+                .hline(ui.max_rect().x_range(), y, Stroke::new(1.0, theme::line()));
             self.code(ui);
         });
     }
@@ -791,22 +1214,15 @@ impl App {
         let h = ui.available_height();
         ui.allocate_ui_with_layout(
             Vec2::new(ui.available_width(), h),
-            egui::Layout::top_down(egui::Align::Center),
+            egui::Layout::top_down(Align::Center),
             |ui| {
-                ui.add_space(h * 0.33);
-                let (r, _) = ui.allocate_exact_size(Vec2::new(46.0, 46.0), Sense::hover());
-                let p = ui.painter();
-                p.rect_filled(r, 11.0, theme::ACCENT);
-                let c = r.center();
-                let w = Stroke::new(3.4, Color32::from_rgb(0xf2, 0xf8, 0xff));
-                p.line_segment([egui::pos2(c.x - 2.5, c.y - 8.5), egui::pos2(c.x - 9.5, c.y)], w);
-                p.line_segment([egui::pos2(c.x - 9.5, c.y), egui::pos2(c.x - 2.5, c.y + 8.5)], w);
-                p.line_segment([egui::pos2(c.x + 2.5, c.y - 8.5), egui::pos2(c.x + 9.5, c.y)], w);
-                p.line_segment([egui::pos2(c.x + 9.5, c.y), egui::pos2(c.x + 2.5, c.y + 8.5)], w);
-                ui.add_space(10.0);
-                ui.label(RichText::new(title).size(17.0).color(theme::FG));
+                ui.add_space(h * 0.3);
+                let (r, _) = ui.allocate_exact_size(Vec2::new(48.0, 48.0), Sense::hover());
+                logo_at(ui.painter(), r);
+                ui.add_space(14.0);
+                ui.label(RichText::new(title).size(17.0).color(theme::text()));
                 ui.add_space(6.0);
-                ui.label(RichText::new(sub).size(12.0).color(theme::DIM));
+                ui.label(RichText::new(sub).size(12.0).color(theme::muted()));
             },
         );
     }
@@ -814,215 +1230,388 @@ impl App {
     fn crumb(&mut self, ui: &mut egui::Ui) {
         let Some(cur) = self.cur.as_ref() else { return };
         let (dir, name) = match cur.path.rfind('/') {
-            Some(i) => (&cur.path[..i + 1], cur.name.as_str()),
-            None => ("", cur.name.as_str()),
+            Some(i) => (cur.path[..i + 1].to_string(), cur.name.clone()),
+            None => (String::new(), cur.name.clone()),
         };
         let size = cur.size;
         let truncated = cur.truncated;
         let binary = cur.binary;
         let deleted = cur.deleted;
+        let is_md = cur.is_md;
+        let preview = cur.preview;
+        let dirty = cur.dirty;
         let diff = self.diff_mode;
+        let changed = self.git.files.contains_key(&cur.path);
 
         ui.horizontal(|ui| {
-            ui.set_height(26.0);
-            ui.add_space(10.0);
-            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.set_height(38.0);
+            ui.add_space(14.0);
+            ui.spacing_mut().item_spacing.x = 4.0;
             if !dir.is_empty() {
-                ui.label(RichText::new(dir).size(11.0).color(theme::FAINT));
+                ui.label(RichText::new(&dir).size(11.0).color(theme::faint()));
             }
-            ui.label(RichText::new(name).size(11.5).color(theme::FG));
-            ui.add_space(10.0);
+            ui.label(RichText::new(&name).size(12.0).color(theme::text()).strong());
+            if dirty {
+                let (r, _) = ui.allocate_exact_size(Vec2::new(5.0, 5.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 2.5, theme::brass());
+            }
+            ui.add_space(6.0);
 
             if binary {
-                badge(ui, "二进制", theme::M);
+                badge(ui, "二进制", theme::brass());
             } else if deleted {
-                badge(ui, "已删除", theme::D);
+                badge(ui, "已删除", theme::rose());
             } else if diff {
-                badge(ui, "改动视图", theme::ACCENT);
+                badge(ui, "改动视图", theme::brass());
             } else if truncated {
-                badge(ui, "已截断", theme::M);
+                badge(ui, "已截断", theme::brass());
+            } else if is_md {
+                badge(ui, "Markdown", theme::jade());
             }
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(8.0);
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(12.0);
                 if size > 0 {
                     ui.label(
                         RichText::new(fmt_size(size))
-                            .size(10.5)
-                            .color(theme::FAINT),
+                            .size(10.0)
+                            .color(theme::faint())
+                            .monospace(),
                     );
+                }
+                if is_md && !deleted && !diff && ghost(ui, if preview { "源码" } else { "预览" }).clicked()
+                {
+                    if let Some(c) = self.cur.as_mut() {
+                        c.preview = !preview;
+                    }
+                    self.rev += 1;
+                }
+                if dirty {
+                    let b =
+                        egui::Button::new(RichText::new("保存").size(11.0).color(theme::on_brass()))
+                            .fill(theme::brass())
+                            .rounding(6.0)
+                            .min_size(Vec2::new(46.0, 24.0));
+                    if ui.add(b).clicked() {
+                        self.save_cur();
+                    }
+                }
+                if can_wrap_of(&self.cur) {
+                    if ghost(ui, if self.wrap { "折行 ✓" } else { "折行" }).clicked() {
+                        self.wrap = !self.wrap;
+                        self.rev += 1;
+                    }
+                }
+                if changed && !deleted {
+                    let b = egui::Button::new(RichText::new("Diff").size(11.0))
+                        .rounding(6.0)
+                        .min_size(Vec2::new(44.0, 24.0))
+                        .selected(diff);
+                    if ui.add(b).clicked() {
+                        self.toggle_diff();
+                    }
                 }
             });
         });
     }
 
-    fn code(&mut self, ui: &mut egui::Ui) {
+    fn md_view(&mut self, ui: &mut egui::Ui) {
         let Some(cur) = self.cur.as_ref() else { return };
-        if cur.binary {
-            let msg = format!("二进制文件 · {}", fmt_size(cur.size));
+        let blocks = &cur.blocks;
+        egui::ScrollArea::vertical()
+            .id_salt(("md", self.rev))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Frame::none()
+                    .inner_margin(egui::Margin {
+                        left: 30.0,
+                        right: 30.0,
+                        top: 16.0,
+                        bottom: 48.0,
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width((ui.available_width() - 8.0).max(200.0));
+                        md::render(ui, blocks);
+                    });
+            });
+    }
+
+    fn code(&mut self, ui: &mut egui::Ui) {
+        let Some(c) = self.cur.as_ref() else { return };
+        let (binary, is_md, preview, deleted, truncated, can_wrap, size) = (
+            c.binary,
+            c.is_md,
+            c.preview,
+            c.deleted,
+            c.truncated,
+            c.can_wrap,
+            c.size,
+        );
+        if binary {
+            let msg = format!("二进制文件 · {}", fmt_size(size));
             let h = ui.available_height();
             ui.allocate_ui_with_layout(
                 Vec2::new(ui.available_width(), h),
-                egui::Layout::top_down(egui::Align::Center),
+                egui::Layout::top_down(Align::Center),
                 |ui| {
                     ui.add_space(h * 0.36);
-                    ui.label(RichText::new(msg).size(13.0).color(theme::DIM));
+                    ui.label(RichText::new(msg).size(13.0).color(theme::muted()));
                 },
             );
             return;
         }
+        if is_md && preview && !self.diff_mode && !deleted {
+            self.md_view(ui);
+            return;
+        }
 
-        let diff = self.diff_mode;
-        let (text, lines) = cur.view(diff);
-        let wrap = self.wrap;
+        let editable = is_md && !self.diff_mode && !deleted && !truncated;
+        let wrap = self.wrap && can_wrap;
         let rev = self.rev;
         let scroll_y = self.scroll_y;
-        let gutter_text = &cur.gutter;
-        let digits = cur.digits;
-
         let mono = syntax::font();
         let digit_w = ui.fonts(|f| f.glyph_width(&mono, '0'));
-        let gutter_w = (digits as f32 * digit_w + 22.0).max(46.0);
         let avail_h = ui.available_height();
         let avail_w = ui.available_width();
 
         let cache = &self.cache;
+        let mut changed = false;
         let mut new_scroll = scroll_y;
 
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
+        {
+            let Some(cur) = self.cur.as_mut() else { return };
+            let diff = self.diff_mode;
+            let lang = fsops::detect_lang(&cur.path);
+            let gen_lines = if diff {
+                cur.diff_lines.len()
+            } else {
+                cur.gen_lines
+            };
+            let digits = gen_lines.max(1).to_string().len();
+            let gutter_w = (digits as f32 * digit_w + 26.0).max(52.0);
 
-            // --- 行号槽（垂直跟随，不参与横向滚动）
-            let (grect, _gresp) = ui.allocate_exact_size(
-                Vec2::new(gutter_w, avail_h),
-                Sense::hover(),
-            );
-            let mut child = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(grect)
-                    .layout(egui::Layout::top_down(egui::Align::Min)),
-            );
-            child.set_clip_rect(grect);
-            egui::ScrollArea::vertical()
-                .id_salt(("gutter", rev))
-                .scroll_offset(Vec2::new(0.0, scroll_y))
-                .enable_scrolling(false)
-                .auto_shrink([false, false])
-                .show(&mut child, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    let mut job = egui::text::LayoutJob::default();
-                    job.wrap = egui::text::TextWrapping::no_max_width();
-                    job.append(
-                        gutter_text,
-                        0.0,
-                        egui::TextFormat {
-                            font_id: mono.clone(),
-                            color: Color32::from_rgb(0x85, 0x85, 0x85),
-                            ..Default::default()
-                        },
-                    );
-                    let g = ui.fonts(|f| f.layout_job(job));
-                    let (r, _) = ui.allocate_exact_size(
-                        Vec2::new(gutter_w, g.size().y + 12.0),
-                        Sense::hover(),
-                    );
-                    ui.painter().galley(
-                        egui::pos2(r.right() - 10.0 - g.size().x, r.top() + 8.0),
-                        g,
-                        Color32::from_rgb(0x85, 0x85, 0x85),
-                    );
-                });
-
-            // 分隔线
-            ui.painter().vline(
-                grect.right(),
-                grect.y_range(),
-                Stroke::new(1.0, Color32::from_rgb(0x35, 0x35, 0x37)),
-            );
-
-            // --- 代码
-            let mut layouter = move |ui: &egui::Ui, _buf: &str, wrap_width: f32| {
-                let w = if wrap { wrap_width } else { 0.0 };
-                if let Some(c) = cache.borrow().as_ref() {
-                    if c.rev == rev && (c.w - w).abs() < 0.5 {
-                        return c.galley.clone();
-                    }
-                }
-                let job = syntax::build_job(lines, wrap, w);
-                let g = ui.fonts(|f| f.layout_job(job));
-                *cache.borrow_mut() = Some(GalleyCache {
-                    rev,
-                    w,
-                    galley: g.clone(),
-                });
-                g
+            let mut edit_buf = if editable {
+                Some(std::mem::take(&mut cur.text))
+            } else {
+                None
             };
 
-            let mut ro = RoBuf(text);
-            let desired = if wrap { avail_w - gutter_w - 16.0 } else { f32::INFINITY };
-            let out = egui::ScrollArea::both()
-                .id_salt(("code", rev))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::ZERO;
-                    egui::TextEdit::multiline(&mut ro)
-                        .font(mono.clone())
-                        .code_editor()
-                        .desired_width(desired)
-                        .desired_rows(1)
-                        .frame(false)
-                        .margin(egui::Margin {
-                            left: 10.0,
-                            right: 10.0,
-                            top: 6.0,
-                            bottom: 6.0,
-                        })
-                        .layouter(&mut layouter)
-                        .show(ui);
-                });
-            new_scroll = out.state.offset.y;
-        });
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+
+                let (grect, _gresp) =
+                    ui.allocate_exact_size(Vec2::new(gutter_w, avail_h), Sense::hover());
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(grect)
+                        .layout(egui::Layout::top_down(Align::Min)),
+                );
+                child.set_clip_rect(grect);
+                let gutter_text = if diff {
+                    cur.diff_gutter.as_str()
+                } else {
+                    cur.gutter.as_str()
+                };
+                egui::ScrollArea::vertical()
+                    .id_salt(("gutter", rev))
+                    .scroll_offset(Vec2::new(0.0, scroll_y))
+                    .enable_scrolling(false)
+                    .auto_shrink([false, false])
+                    .show(&mut child, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let mut job = LayoutJob::default();
+                        job.wrap = egui::text::TextWrapping::no_max_width();
+                        job.append(
+                            gutter_text,
+                            0.0,
+                            TextFormat {
+                                font_id: mono.clone(),
+                                color: theme::faint(),
+                                line_height: Some(syntax::LINE_HEIGHT),
+                                ..Default::default()
+                            },
+                        );
+                        let g = ui.fonts(|f| f.layout_job(job));
+                        let (r, _) = ui.allocate_exact_size(
+                            Vec2::new(gutter_w, g.size().y + 16.0),
+                            Sense::hover(),
+                        );
+                        ui.painter().galley(
+                            egui::pos2(r.right() - 12.0 - g.size().x, r.top() + 10.0),
+                            g,
+                            theme::faint(),
+                        );
+                    });
+
+                ui.painter().vline(
+                    grect.right(),
+                    grect.y_range(),
+                    Stroke::new(1.0, theme::line()),
+                );
+
+                let desired = if wrap {
+                    avail_w - gutter_w - 46.0
+                } else {
+                    f32::INFINITY
+                };
+
+                let area: egui::ScrollArea = egui::ScrollArea::both()
+                    .id_salt(("code", rev))
+                    .auto_shrink([false, false]);
+
+                if let Some(buf) = edit_buf.as_mut() {
+                    let mut layouter =
+                        |ui: &egui::Ui, content: &str, wrap_width: f32| -> Arc<egui::Galley> {
+                            let w = if wrap { wrap_width.max(80.0) } else { 0.0 };
+                            let ls = syntax::tokenize(content, lang);
+                            let job = syntax::build_job(&ls, wrap, w);
+                            ui.fonts(|f| f.layout_job(job))
+                        };
+                    let out = area.show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+                        ui.add(
+                            egui::TextEdit::multiline(buf)
+                                .font(mono.clone())
+                                .code_editor()
+                                .desired_width(desired)
+                                .desired_rows(1)
+                                .frame(false)
+                                .margin(egui::Margin {
+                                    left: 26.0,
+                                    right: 22.0,
+                                    top: 10.0,
+                                    bottom: 30.0,
+                                })
+                                .layouter(&mut layouter),
+                        )
+                    });
+                    changed = out.inner.changed();
+                    new_scroll = out.state.offset.y;
+                } else {
+                    let mut layouter = |ui: &egui::Ui, _buf: &str, wrap_width: f32| {
+                        let w = if wrap { wrap_width } else { 0.0 };
+                        if let Some(c) = cache.borrow().as_ref() {
+                            if c.rev == rev && (c.w - w).abs() < 0.5 {
+                                return c.galley.clone();
+                            }
+                        }
+                        let ls: &[syntax::Line] = if diff {
+                            &cur.diff_lines
+                        } else {
+                            &cur.lines
+                        };
+                        let job = syntax::build_job(ls, wrap, w);
+                        let g = ui.fonts(|f| f.layout_job(job));
+                        *cache.borrow_mut() = Some(GalleyCache {
+                            rev,
+                            w,
+                            galley: g.clone(),
+                        });
+                        g
+                    };
+                    let mut ro = RoBuf(if diff {
+                        cur.diff_text.as_str()
+                    } else {
+                        cur.text.as_str()
+                    });
+                    let out = area.show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+                        ui.add(
+                            egui::TextEdit::multiline(&mut ro)
+                                .font(mono.clone())
+                                .code_editor()
+                                .desired_width(desired)
+                                .desired_rows(1)
+                                .frame(false)
+                                .margin(egui::Margin {
+                                    left: 26.0,
+                                    right: 22.0,
+                                    top: 10.0,
+                                    bottom: 30.0,
+                                })
+                                .layouter(&mut layouter),
+                        )
+                    });
+                    new_scroll = out.state.offset.y;
+                }
+            });
+
+            if let Some(buf) = edit_buf {
+                cur.text = buf;
+            }
+        }
 
         self.scroll_y = new_scroll;
+        if changed {
+            if let Some(cur) = self.cur.as_mut() {
+                cur.dirty = true;
+                cur.size = cur.text.len() as u64;
+            }
+            self.rebuild();
+        }
     }
-
-    /* ------------------------------------------------ 状态栏 */
 
     fn statusbar(&mut self, ctx: &egui::Context) {
         let frame = egui::Frame::none()
-            .fill(theme::TOP)
+            .fill(theme::bg2())
             .inner_margin(egui::Margin {
-                left: 10.0,
-                right: 10.0,
-                top: 3.0,
-                bottom: 3.0,
+                left: 14.0,
+                right: 14.0,
+                top: 0.0,
+                bottom: 0.0,
             });
         egui::TopBottomPanel::bottom("status")
-            .exact_height(24.0)
+            .exact_height(STATUS_H)
             .frame(frame)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.spacing_mut().item_spacing.x = 9.0;
                     let p = self.conf.projects.get(self.conf.active);
-                    let name = p.map(|x| x.name.clone()).unwrap_or_default();
+                    let name = p.map(|x| x.name.clone()).unwrap_or_else(|| "未打开项目".into());
                     let path = p.map(|x| short_path(&x.path)).unwrap_or_default();
 
                     let (dot, dot_c) = if self.git.is_git {
-                        ("●", Color32::from_rgb(0x4e, 0xc9, 0xb0))
+                        ("●", theme::jade())
                     } else {
-                        ("○", theme::FAINT)
+                        ("○", theme::faint())
                     };
-                    ui.label(RichText::new(dot).size(9.0).color(dot_c));
-                    ui.label(RichText::new(name).size(11.0).color(theme::FG));
-                    ui.label(RichText::new(path).size(10.5).color(theme::FAINT));
+                    ui.label(RichText::new(dot).size(8.0).color(dot_c));
+                    ui.label(RichText::new(name).size(10.5).color(theme::text()));
+                    ui.label(RichText::new(path).size(9.5).color(theme::faint()));
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.git.is_git {
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(
+                            RichText::new("Mr.7y")
+                                .size(9.5)
+                                .color(theme::brass())
+                                .monospace(),
+                        );
+                        ui.label(
+                            RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                                .size(9.5)
+                                .color(theme::faint())
+                                .monospace(),
+                        );
+                        ui.label(
+                            RichText::new("UTF-8")
+                                .size(9.5)
+                                .color(theme::faint())
+                                .monospace(),
+                        );
+                        if let Some(c) = self.cur.as_ref() {
                             ui.label(
-                                RichText::new(format!("分支 {}", if self.git.branch.is_empty() { "-" } else { &self.git.branch }))
-                                    .size(10.5)
-                                    .color(theme::DIM),
+                                RichText::new(format!("{} 行", c.lines.len().max(1)))
+                                    .size(9.5)
+                                    .color(theme::faint())
+                                    .monospace(),
                             );
+                            ui.label(
+                                RichText::new(if c.is_md { "可编辑" } else { "只读" }).size(9.5).color(
+                                    if c.is_md { theme::jade() } else { theme::faint() },
+                                ),
+                            );
+                        }
+                        if self.git.is_git {
                             let mut m = 0;
                             let mut u = 0;
                             for v in self.git.files.values() {
@@ -1032,43 +1621,50 @@ impl App {
                                     m += 1
                                 }
                             }
-                            ui.label(RichText::new(format!("U {}", u)).size(10.5).color(theme::U));
-                            ui.label(RichText::new(format!("M {}", m)).size(10.5).color(theme::M));
+                            ui.label(
+                                RichText::new(format!("U {}", u)).size(9.5).color(theme::jade()),
+                            );
+                            ui.label(
+                                RichText::new(format!("M {}", m)).size(9.5).color(theme::brass()),
+                            );
+                            let branch = if self.git.branch.is_empty() {
+                                "-".to_string()
+                            } else {
+                                self.git.branch.clone()
+                            };
+                            ui.label(
+                                RichText::new(format!("分支 {}", branch))
+                                    .size(9.5)
+                                    .color(theme::muted()),
+                            );
                         }
                     });
                 });
             });
     }
 
-    /* ------------------------------------------------ 浮层 */
-
     fn overlays(&mut self, ctx: &egui::Context) {
-        // 提示条
         if !self.toast.is_empty() && self.toast_at.elapsed() < Duration::from_secs(3) {
             egui::Area::new("toast".into())
                 .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0.0, -46.0))
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(0x3a, 0x2d, 0x1a))
-                        .rounding(6.0)
+                        .fill(theme::raise())
+                        .stroke(Stroke::new(1.0, theme::line2()))
+                        .rounding(9.0)
                         .inner_margin(egui::Margin {
-                            left: 14.0,
-                            right: 14.0,
-                            top: 7.0,
-                            bottom: 7.0,
+                            left: 15.0,
+                            right: 15.0,
+                            top: 8.0,
+                            bottom: 8.0,
                         })
                         .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(&self.toast)
-                                    .size(12.0)
-                                    .color(Color32::from_rgb(0xe2, 0xc0, 0x8d)),
-                            );
+                            ui.label(RichText::new(&self.toast).size(11.5).color(theme::text()));
                         });
                 });
         }
 
-        // 确认移除
         if self.confirm_del {
             let name = self
                 .conf
@@ -1086,7 +1682,7 @@ impl App {
                     ui.label(
                         RichText::new("只移除记录，不会删除磁盘上的文件。")
                             .size(11.0)
-                            .color(theme::DIM),
+                            .color(theme::muted()),
                     );
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
@@ -1116,7 +1712,7 @@ impl App {
             .show(ctx, |ui| {
                 let r = ctx.screen_rect();
                 ui.painter()
-                    .rect_filled(r, 0.0, Color32::from_black_alpha(118));
+                    .rect_filled(r, 0.0, Color32::from_black_alpha(140));
                 let resp = ui.allocate_rect(r, Sense::click());
                 if resp.clicked() {
                     self.palette = false;
@@ -1130,15 +1726,16 @@ impl App {
         let screen = ctx.screen_rect();
         let w = 620.0_f32.min(screen.width() - 60.0);
         let x = screen.center().x - w / 2.0;
-        let y = screen.top() + 90.0;
+        let y = screen.top() + 96.0;
 
         egui::Area::new("palette".into())
             .fixed_pos(egui::pos2(x, y))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                egui::Frame::popup(ui.style())
-                    .fill(Color32::from_rgb(0x25, 0x25, 0x26))
-                    .rounding(6.0)
+                egui::Frame::none()
+                    .fill(theme::panel())
+                    .stroke(Stroke::new(1.0, theme::line2()))
+                    .rounding(12.0)
                     .inner_margin(egui::Margin::same(10.0))
                     .show(ui, |ui| {
                         ui.set_width(w);
@@ -1146,7 +1743,7 @@ impl App {
                             egui::TextEdit::singleline(&mut self.pal_q)
                                 .hint_text("输入文件名，回车打开")
                                 .desired_width(f32::INFINITY)
-                                .margin(egui::Margin::symmetric(6.0, 5.0)),
+                                .margin(egui::Margin::symmetric(7.0, 6.0)),
                         );
                         r.request_focus();
 
@@ -1174,47 +1771,47 @@ impl App {
                                 if results.is_empty() {
                                     ui.label(
                                         RichText::new("没有匹配的文件")
-                                            .size(12.0)
-                                            .color(theme::FAINT),
+                                            .size(11.5)
+                                            .color(theme::faint()),
                                     );
                                 }
                                 for (i, (path, _)) in results.iter().enumerate() {
                                     let sel = i == self.pal_sel;
                                     let (rect, resp) = ui.allocate_exact_size(
-                                        Vec2::new(ui.available_width(), 22.0),
+                                        Vec2::new(ui.available_width(), 26.0),
                                         Sense::click(),
                                     );
                                     let p = ui.painter();
                                     if sel {
-                                        p.rect_filled(rect, 3.0, theme::SEL);
+                                        p.rect_filled(rect, 6.0, theme::sel());
                                     } else if resp.hovered() {
-                                        p.rect_filled(rect, 3.0, theme::HOVER);
+                                        p.rect_filled(rect, 6.0, theme::hover());
                                     }
                                     let (dir, name) = match path.rfind('/') {
                                         Some(k) => (&path[..k + 1], &path[k + 1..]),
                                         None => ("", path.as_str()),
                                     };
                                     p.text(
-                                        egui::pos2(rect.left() + 6.0, rect.center().y),
+                                        egui::pos2(rect.left() + 8.0, rect.center().y),
                                         Align2::LEFT_CENTER,
                                         name,
-                                        FontId::proportional(12.5),
-                                        if sel { Color32::WHITE } else { theme::FG },
+                                        FontId::proportional(12.0),
+                                        theme::text(),
                                     );
                                     let nw = p
                                         .layout_no_wrap(
                                             name.to_string(),
-                                            FontId::proportional(12.5),
-                                            theme::FG,
+                                            FontId::proportional(12.0),
+                                            theme::text(),
                                         )
                                         .size()
                                         .x;
                                     p.text(
-                                        egui::pos2(rect.left() + 12.0 + nw, rect.center().y),
+                                        egui::pos2(rect.left() + 14.0 + nw, rect.center().y),
                                         Align2::LEFT_CENTER,
                                         dir,
-                                        FontId::proportional(10.5),
-                                        theme::FAINT,
+                                        FontId::proportional(10.0),
+                                        theme::faint(),
                                     );
                                     if resp.clicked() {
                                         chosen = Some(path.clone());
@@ -1235,10 +1832,11 @@ impl App {
         }
     }
 
-    /* ------------------------------------------------ 输入 */
-
     fn input(&mut self, ctx: &egui::Context) {
         let cmd = ctx.input(|i| i.modifiers.command);
+        if cmd && ctx.input(|i| i.key_pressed(egui::Key::S)) {
+            self.save_cur();
+        }
         if cmd && ctx.input(|i| i.key_pressed(egui::Key::P)) && !self.palette {
             if !self.conf.projects.is_empty() {
                 self.ensure_files();
@@ -1247,6 +1845,9 @@ impl App {
                 self.pal_sel = 0;
             }
             return;
+        }
+        if cmd && ctx.input(|i| i.key_pressed(egui::Key::B)) {
+            self.left_open = !self.left_open;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::F5)) {
             self.refresh_git(true);
@@ -1270,7 +1871,6 @@ impl eframe::App for App {
 
         let toast_left = Duration::from_secs(3).saturating_sub(self.toast_at.elapsed());
         if !toast_left.is_zero() {
-            // 只在提示到期那一刻醒来一次
             ctx.request_repaint_after(toast_left);
         }
         if ctx.input(|i| i.focused) && self.git_at.elapsed() > Duration::from_secs(5) {
@@ -1283,11 +1883,11 @@ impl eframe::App for App {
 
         self.statusbar(ctx);
         self.topbar(ctx);
-        self.sidebar(ctx);
+        self.gitbar(ctx);
+        self.side_panels(ctx);
         self.center(ctx);
         self.overlays(ctx);
 
-        // 拖入文件夹
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -1314,50 +1914,257 @@ impl eframe::App for App {
                     let r = ctx.screen_rect();
                     let p = ui.painter();
                     p.rect_filled(r, 0.0, Color32::from_black_alpha(150));
-                    p.rect_stroke(r.shrink(9.0), 8.0, Stroke::new(2.0, theme::ACCENT));
+                    p.rect_stroke(r.shrink(9.0), 8.0, Stroke::new(2.0, theme::brass()));
                     p.text(
                         r.center(),
                         Align2::CENTER_CENTER,
                         "松手即可添加项目",
                         FontId::proportional(18.0),
-                        Color32::WHITE,
+                        theme::text(),
                     );
                 });
         }
     }
 }
 
-/* ---------------------------------------------------------------- 工具 */
+fn brand(ui: &mut egui::Ui) {
+    let mut job = LayoutJob::default();
+    let f = FontId::proportional(14.5);
+    job.append(
+        "Dev",
+        0.0,
+        TextFormat {
+            font_id: f.clone(),
+            color: theme::brass(),
+            ..Default::default()
+        },
+    );
+    job.append(
+        "View",
+        0.0,
+        TextFormat {
+            font_id: f,
+            color: theme::text(),
+            ..Default::default()
+        },
+    );
+    ui.label(job);
+}
 
-fn logo(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(18.0, 18.0), Sense::hover());
+fn logo(ui: &mut egui::Ui, size: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(size, size), Sense::hover());
+    logo_at(ui.painter(), rect);
+}
+
+fn logo_at(p: &egui::Painter, rect: egui::Rect) {
+    let size = rect.width();
+    p.rect_filled(rect, 7.0, theme::brass());
+    let hi = egui::Rect::from_min_size(rect.min, Vec2::new(size, size * 0.46));
+    p.rect_filled(hi, 7.0, Color32::from_white_alpha(16));
+    let w = size * 0.085;
+    let h = size * 0.5;
+    let gap = size * 0.208;
+    let x0 = rect.center().x - gap - w / 2.0;
+    let y0 = rect.center().y - h / 2.0;
+    for i in 0..3 {
+        let a = [205u8, 150, 100][i];
+        let c = Color32::from_rgba_unmultiplied(20, 15, 8, a);
+        p.rect_filled(
+            egui::Rect::from_min_size(egui::pos2(x0 + i as f32 * gap, y0), Vec2::new(w, h)),
+            w / 2.0,
+            c,
+        );
+    }
+}
+
+fn cmd_bar(ui: &mut egui::Ui, width: f32) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 32.0), Sense::click());
     let p = ui.painter();
-    p.rect_filled(rect, 4.5, theme::ACCENT);
-    let c = rect.center();
-    let w = Stroke::new(1.5, Color32::from_rgb(0xf2, 0xf8, 0xff));
-    p.line_segment([egui::pos2(c.x - 1.9, c.y - 3.4), egui::pos2(c.x - 4.2, c.y)], w);
-    p.line_segment([egui::pos2(c.x - 4.2, c.y), egui::pos2(c.x - 1.9, c.y + 3.4)], w);
-    p.line_segment([egui::pos2(c.x + 1.9, c.y - 3.4), egui::pos2(c.x + 4.2, c.y)], w);
-    p.line_segment([egui::pos2(c.x + 4.2, c.y), egui::pos2(c.x + 1.9, c.y + 3.4)], w);
+    let border = if resp.hovered() {
+        theme::line2()
+    } else {
+        theme::line()
+    };
+    p.rect(rect, 9.0, theme::panel2(), Stroke::new(1.0, border));
+    p.text(
+        egui::pos2(rect.left() + 12.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        "搜索文件、打开命令面板",
+        FontId::proportional(11.0),
+        theme::faint(),
+    );
+    p.text(
+        egui::pos2(rect.right() - 12.0, rect.center().y),
+        Align2::RIGHT_CENTER,
+        "Ctrl K",
+        FontId::monospace(9.5),
+        theme::faint(),
+    );
+    resp.clicked()
+}
+
+fn icon_btn(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
+    let color = if on { theme::brass() } else { theme::muted() };
+    let b = egui::Button::new(RichText::new(text).size(13.0).color(color))
+        .frame(false)
+        .min_size(Vec2::new(26.0, 26.0));
+    ui.add(b)
+}
+
+fn avatar(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(26.0, 26.0), Sense::hover());
+    ui.painter().circle_filled(rect.center(), 13.0, theme::brass_bg());
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        "7y",
+        FontId::proportional(10.0),
+        theme::brass(),
+    );
+}
+
+fn pill(ui: &mut egui::Ui, icon: &str, text: &str) {
+    let galley = ui.painter().layout_no_wrap(
+        format!("{}  {}", icon, text),
+        FontId::proportional(11.0),
+        theme::muted(),
+    );
+    let pad = Vec2::new(9.0, 5.0);
+    let (rect, _) = ui.allocate_exact_size(galley.size() + pad * 2.0, Sense::hover());
+    ui.painter()
+        .rect(rect, 8.0, theme::panel(), Stroke::new(1.0, theme::line()));
+    ui.painter().galley(
+        egui::pos2(rect.left() + pad.x, rect.center().y - galley.size().y / 2.0),
+        galley,
+        theme::muted(),
+    );
+}
+
+fn graph(ui: &mut egui::Ui, ahead: usize, behind: usize) {
+    let w = 132.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 32.0), Sense::hover());
+    let p = ui.painter();
+    let y = rect.center().y;
+    p.line_segment(
+        [
+            egui::pos2(rect.left() + 6.0, y),
+            egui::pos2(rect.right() - 6.0, y),
+        ],
+        Stroke::new(1.4, theme::line2()),
+    );
+    let n = (ahead + behind + 4).min(7);
+    for i in 0..n {
+        let t = (i as f32 + 1.0) / (n as f32 + 1.0);
+        let x = rect.left() + 6.0 + t * (w - 12.0);
+        let c = if behind > 0 && i + 1 > n - behind {
+            theme::jade()
+        } else {
+            theme::brass()
+        };
+        p.circle_filled(egui::pos2(x, y), 3.0, c);
+    }
+    let c = egui::pos2(rect.right() - 6.0, y);
+    p.circle(c, 4.0, theme::bg2(), Stroke::new(1.4, theme::brass()));
+}
+
+fn ghost(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(RichText::new(text).size(11.0).color(theme::muted()))
+            .frame(true)
+            .rounding(6.0)
+            .min_size(Vec2::new(0.0, 24.0)),
+    )
+}
+
+fn seg(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
+    let (fill, color) = if on {
+        (theme::brass_bg(), theme::brass())
+    } else {
+        (Color32::TRANSPARENT, theme::muted())
+    };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), FontId::proportional(11.0), color);
+    let pad = Vec2::new(11.0, 5.0);
+    let (rect, resp) = ui.allocate_exact_size(galley.size() + pad * 2.0, Sense::click());
+    ui.painter().rect(
+        rect,
+        7.0,
+        fill,
+        Stroke::new(1.0, if on { theme::brass() } else { theme::line() }),
+    );
+    ui.painter().galley(
+        egui::pos2(rect.left() + pad.x, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    resp
+}
+
+fn tab_btn(ui: &mut egui::Ui, text: &str, on: bool) -> bool {
+    let color = if on { theme::text() } else { theme::muted() };
+    let btn = egui::Button::new(RichText::new(text).size(11.5).color(color))
+        .frame(false)
+        .min_size(Vec2::new(0.0, 24.0));
+    let r = ui.add(btn);
+    if on {
+        let rect = r.rect;
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left() + 2.0, rect.bottom() - 1.0),
+                egui::pos2(rect.right() - 2.0, rect.bottom() + 1.0),
+            ),
+            1.0,
+            theme::brass(),
+        );
+    }
+    r.clicked()
 }
 
 fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
-    let galley = ui.painter().layout_no_wrap(
-        text.to_string(),
-        FontId::proportional(9.5),
-        color,
-    );
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), FontId::proportional(9.5), color);
     let pad = Vec2::new(7.0, 2.0);
-    let (rect, _) = ui.allocate_exact_size(
-        galley.size() + pad * 2.0,
-        Sense::hover(),
-    );
-    ui.painter().rect_filled(rect, 3.0, color.gamma_multiply(0.18));
+    let (rect, _) = ui.allocate_exact_size(galley.size() + pad * 2.0, Sense::hover());
+    ui.painter().rect_filled(rect, 4.0, color.gamma_multiply(0.16));
     ui.painter().galley(
         egui::pos2(rect.left() + pad.x, rect.top() + pad.y),
         galley,
         color,
     );
+}
+
+fn kv(ui: &mut egui::Ui, k: &str, v: &str) {
+    ui.horizontal(|ui| {
+        ui.add_space(14.0);
+        ui.label(RichText::new(k).size(10.0).color(theme::faint()));
+        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+            ui.add_space(14.0);
+            ui.label(
+                RichText::new(v)
+                    .size(10.5)
+                    .color(theme::muted())
+                    .monospace(),
+            );
+        });
+    });
+}
+
+fn rule(ui: &mut egui::Ui, left: f32) {
+    ui.horizontal(|ui| {
+        ui.add_space(left);
+        let (r, _) = ui.allocate_exact_size(
+            Vec2::new((ui.available_width() - left).max(40.0), 1.0),
+            Sense::hover(),
+        );
+        ui.painter()
+            .hline(r.x_range(), r.center().y, Stroke::new(1.0, theme::line()));
+    });
+}
+
+fn can_wrap_of(cur: &Option<Cur>) -> bool {
+    cur.as_ref().map(|c| c.can_wrap).unwrap_or(true)
 }
 
 fn fmt_size(n: u64) -> String {
@@ -1380,7 +2187,6 @@ fn short_path(p: &str) -> String {
     p.to_string()
 }
 
-/// 子序列模糊匹配，返回得分（越大越好）
 fn fuzzy_score(needle: &str, hay: &str) -> Option<i32> {
     if needle.is_empty() {
         return Some(0);
@@ -1390,12 +2196,11 @@ fn fuzzy_score(needle: &str, hay: &str) -> Option<i32> {
     let mut hi = 0;
     let mut score = 0i32;
     let mut run = 0i32;
-    for (ni, nc) in n.iter().enumerate() {
+    for nc in n.iter() {
         let mut found = false;
         while hi < h.len() {
             if h[hi] == *nc {
                 score += 10 + run * 6;
-                // 词首加分
                 if hi == 0 || h[hi - 1] == '/' || h[hi - 1] == '_' || h[hi - 1] == '-' {
                     score += 14;
                 }
@@ -1409,7 +2214,6 @@ fn fuzzy_score(needle: &str, hay: &str) -> Option<i32> {
             score -= 1;
         }
         if !found {
-            let _ = ni;
             return None;
         }
     }

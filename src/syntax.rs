@@ -24,29 +24,11 @@ pub struct Line {
 }
 
 pub fn color(t: u8) -> Color32 {
-    match t {
-        K => Color32::from_rgb(0x56, 0x9c, 0xd6),
-        S => Color32::from_rgb(0xce, 0x91, 0x78),
-        N => Color32::from_rgb(0xb5, 0xce, 0xa8),
-        C => Color32::from_rgb(0x6a, 0x99, 0x55),
-        Y => Color32::from_rgb(0x4e, 0xc9, 0xb0),
-        F => Color32::from_rgb(0xdc, 0xdc, 0xaa),
-        A => Color32::from_rgb(0x9c, 0xdc, 0xfe),
-        V => Color32::from_rgb(0x9c, 0xdc, 0xfe),
-        G => Color32::from_rgb(0x56, 0x9c, 0xd6),
-        I => Color32::from_rgb(0xa8, 0xe0, 0xa0),
-        D => Color32::from_rgb(0xf0, 0xa8, 0xa8),
-        H => Color32::from_rgb(0x56, 0x9c, 0xd6),
-        _ => Color32::from_rgb(0xd4, 0xd4, 0xd4),
-    }
+    crate::theme::tok(t)
 }
 
 fn bg(t: u8) -> Color32 {
-    match t {
-        I => Color32::from_rgb(0x1b, 0x35, 0x1d),
-        D => Color32::from_rgb(0x3a, 0x1e, 0x1e),
-        _ => Color32::TRANSPARENT,
-    }
+    crate::theme::tok_bg(t)
 }
 
 /// 把可能含换行的 span 序列切成按行的结构
@@ -827,8 +809,12 @@ pub fn tokenize(src: &str, lang: &str) -> Vec<Line> {
     split_lines(spans)
 }
 
+/// 代码字号 15px，行高 1.9；阅读优先
+pub const CODE_SIZE: f32 = 15.0;
+pub const LINE_HEIGHT: f32 = 28.5;
+
 pub fn font() -> FontId {
-    FontId::monospace(13.0)
+    FontId::monospace(CODE_SIZE)
 }
 
 pub fn build_job(lines: &[Line], wrap: bool, width: f32) -> egui::text::LayoutJob {
@@ -844,7 +830,12 @@ pub fn build_job(lines: &[Line], wrap: bool, width: f32) -> egui::text::LayoutJo
     } else {
         TextWrapping::no_max_width()
     };
-    let base = TextFormat { font_id: f.clone(), color: color(P), ..Default::default() };
+    let base = TextFormat {
+        font_id: f.clone(),
+        color: color(P),
+        line_height: Some(LINE_HEIGHT),
+        ..Default::default()
+    };
     for (idx, line) in lines.iter().enumerate() {
         if line.spans.is_empty() {
             job.append(" ", 0.0, base.clone());
@@ -857,6 +848,7 @@ pub fn build_job(lines: &[Line], wrap: bool, width: f32) -> egui::text::LayoutJo
                         font_id: f.clone(),
                         color: color(*t),
                         background: bg(*t),
+                        line_height: Some(LINE_HEIGHT),
                         ..Default::default()
                     },
                 );

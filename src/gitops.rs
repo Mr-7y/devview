@@ -10,6 +10,9 @@ use std::time::{Duration, Instant};
 pub struct GitInfo {
     pub is_git: bool,
     pub branch: String,
+    pub remote: String,
+    pub ahead: usize,
+    pub behind: usize,
     pub files: HashMap<String, String>,
 }
 
@@ -92,7 +95,8 @@ pub fn status(root: &Path, force: bool) -> GitInfo {
 
     let mut info = GitInfo::default();
     if !root.join(".git").exists() {
-        if let Ok(mut c) = cache().lock() {
+    
+    if let Ok(mut c) = cache().lock() {
             c.insert(key, (Instant::now(), info.clone()));
         }
         return info;
@@ -133,10 +137,86 @@ pub fn status(root: &Path, force: bool) -> GitInfo {
         info.branch = b.trim().to_string();
     }
 
+    if let Some(r) = run(root, &["remote"], 3000) {
+        info.remote = r.lines().next().unwrap_or("").trim().to_string();
+    }
+
+    // 与上游的差距；没有 upstream 时静默为 0
+    if let Some(o) = run(
+        root,
+        &["rev-list", "--count", "--left-right", "@{upstream}...HEAD"],
+        4000,
+    ) {
+        let parts: Vec<&str> = o.split_whitespace().collect();
+        if parts.len() == 2 {
+            info.behind = parts[0].parse().unwrap_or(0);
+            info.ahead = parts[1].parse().unwrap_or(0);
+        }
+    }
+
+    if let Some(r) = run(root, &["remote"], 3000) {
+        info.remote = r.lines().next().unwrap_or("").trim().to_string();
+    }
+
+    // 与上游的差距；没有 upstream 时静默为 0
+    if let Some(o) = run(
+        root,
+        &["rev-list", "--count", "--left-right", "@{upstream}...HEAD"],
+        4000,
+    ) {
+        let parts: Vec<&str> = o.split_whitespace().collect();
+        if parts.len() == 2 {
+            info.behind = parts[0].parse().unwrap_or(0);
+            info.ahead = parts[1].parse().unwrap_or(0);
+        }
+    }
+
+
     if let Ok(mut c) = cache().lock() {
         c.insert(key, (Instant::now(), info.clone()));
     }
     info
+}
+
+/// 提交已跟踪文件的改动。未跟踪文件不会被自动加入。
+pub fn commit(root: &Path, msg: &str) -> Result<String, String> {
+    let out = run(root, &["commit", "-am", msg], 15000)
+        .ok_or_else(|| "提交超时或没有可提交的改动".to_string())?;
+    let first = out.lines().next().unwrap_or("已提交").trim().to_string();
+    Ok(if first.is_empty() {
+        "已提交".to_string()
+    } else {
+        first
+    })
+}
+
+/// 仅快进拉取，避免产生意外的合并提交
+pub fn pull(root: &Path) -> Result<String, String> {
+    run(root, &["pull", "--ff-only"], 30000)
+        .map(|o| o.lines().next().unwrap_or("已拉取").trim().to_string())
+        .ok_or_else(|| "拉取失败或超时".to_string())
+}
+
+pub fn push(root: &Path) -> Result<String, String> {
+    run(root, &["push"], 30000)
+        .map(|o| {
+            let t = o.trim();
+            if t.is_empty() {
+                "已推送".to_string()
+            } else {
+                t.lines().last().unwrap_or("已推送").to_string()
+            }
+        })
+        .ok_or_else(|| "推送失败或超时".to_string())
+}
+
+/// 让状态缓存立刻失效（提交/拉取/推送之后调用）
+pub fn invalidate(root: &Path) {
+    let key = root.to_string_lossy().to_string();
+
+    if let Ok(mut c) = cache().lock() {
+        c.remove(&key);
+    }
 }
 
 fn new_file_diff(rel: &str, content: &str) -> String {

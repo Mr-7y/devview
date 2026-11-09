@@ -1,35 +1,192 @@
-//! 配色与字体：VS Code Dark+ 风格
+//! 配色与字体：Ai-View 视觉体系（夜航 / 日纸双主题）。
+//!
+//! 颜色一律走函数而不是常量，切换主题只改一个原子标志，
+//! 下一次重绘即可整体换肤。
 
 use crate::syntax;
 use egui::{Color32, FontFamily, FontId, TextStyle};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-pub const BG: Color32 = Color32::from_rgb(0x1e, 0x1e, 0x1e);
-pub const SIDE: Color32 = Color32::from_rgb(0x21, 0x21, 0x22);
-pub const TOP: Color32 = Color32::from_rgb(0x2d, 0x2d, 0x2f);
-pub const LINE: Color32 = Color32::from_rgb(0x2b, 0x2b, 0x2c);
-pub const FG: Color32 = Color32::from_rgb(0xd4, 0xd4, 0xd4);
-pub const DIM: Color32 = Color32::from_rgb(0x96, 0x96, 0x96);
-pub const FAINT: Color32 = Color32::from_rgb(0x6e, 0x6e, 0x6e);
-pub const ACCENT: Color32 = Color32::from_rgb(0x0a, 0x84, 0xff);
-pub const HOVER: Color32 = Color32::from_rgb(0x2a, 0x2d, 0x2e);
-pub const SEL: Color32 = Color32::from_rgb(0x09, 0x47, 0x71);
+static LIGHT: AtomicBool = AtomicBool::new(false);
 
-pub const M: Color32 = Color32::from_rgb(0xe2, 0xc0, 0x8d);
-pub const A: Color32 = Color32::from_rgb(0x89, 0xd1, 0x85);
-pub const D: Color32 = Color32::from_rgb(0xf1, 0x4c, 0x4c);
-pub const U: Color32 = Color32::from_rgb(0x73, 0xc9, 0x91);
-pub const R: Color32 = Color32::from_rgb(0x56, 0x9c, 0xd6);
+pub fn light() -> bool {
+    LIGHT.load(Ordering::Relaxed)
+}
+
+pub fn set_light(v: bool) {
+    LIGHT.store(v, Ordering::Relaxed);
+}
+
+pub fn toggle() -> bool {
+    let v = !light();
+    set_light(v);
+    v
+}
+
+/* ---------------------------------------------------------------- 基础色 */
+
+fn c(dark: u32, bright: u32) -> Color32 {
+    let v = if light() { bright } else { dark };
+    Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
+}
+
+pub fn bg() -> Color32 {
+    c(0x0c0e11, 0xf4f1ea)
+}
+pub fn bg2() -> Color32 {
+    c(0x090a0d, 0xeae6dc)
+}
+pub fn panel() -> Color32 {
+    c(0x111419, 0xfbf9f4)
+}
+pub fn panel2() -> Color32 {
+    c(0x171b21, 0xf2eee5)
+}
+pub fn raise() -> Color32 {
+    c(0x1c2129, 0xfffdf8)
+}
+pub fn code_bg() -> Color32 {
+    c(0x0c0e11, 0xf7f4ed)
+}
+
+pub fn text() -> Color32 {
+    c(0xe9ebef, 0x1d1f23)
+}
+pub fn muted() -> Color32 {
+    c(0x8d95a2, 0x6c7077)
+}
+pub fn faint() -> Color32 {
+    c(0x5b6370, 0x9a9da3)
+}
+
+pub fn line() -> Color32 {
+    if light() {
+        Color32::from_rgba_unmultiplied(29, 31, 35, 22)
+    } else {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 17)
+    }
+}
+pub fn line2() -> Color32 {
+    if light() {
+        Color32::from_rgba_unmultiplied(29, 31, 35, 43)
+    } else {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 33)
+    }
+}
+
+pub fn brass() -> Color32 {
+    c(0xd3a95f, 0x94662a)
+}
+pub fn brass2() -> Color32 {
+    c(0xefd09a, 0x7a5220)
+}
+pub fn brass_bg() -> Color32 {
+    if light() {
+        Color32::from_rgba_unmultiplied(148, 102, 42, 19)
+    } else {
+        Color32::from_rgba_unmultiplied(211, 169, 95, 26)
+    }
+}
+pub fn on_brass() -> Color32 {
+    c(0x191307, 0xfffaf0)
+}
+
+pub fn jade() -> Color32 {
+    c(0x63c39a, 0x2f7a58)
+}
+pub fn rose() -> Color32 {
+    c(0xdf746c, 0xb25049)
+}
+
+pub fn sel() -> Color32 {
+    if light() {
+        Color32::from_rgba_unmultiplied(148, 102, 42, 26)
+    } else {
+        Color32::from_rgba_unmultiplied(211, 169, 95, 19)
+    }
+}
+pub fn sel2() -> Color32 {
+    if light() {
+        Color32::from_rgba_unmultiplied(148, 102, 42, 56)
+    } else {
+        Color32::from_rgba_unmultiplied(211, 169, 95, 51)
+    }
+}
+pub fn hover() -> Color32 {
+    if light() {
+        Color32::from_rgba_unmultiplied(29, 31, 35, 12)
+    } else {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 12)
+    }
+}
+
+/// 代码 token 颜色
+pub fn tok(t: u8) -> Color32 {
+    let d = match t {
+        syntax::K => 0xddaa6a,
+        syntax::S => 0xacc994,
+        syntax::N => 0xd0ba7e,
+        syntax::C => 0x7d866f,
+        syntax::Y => 0x8abfb3,
+        syntax::F => 0xe6d6b0,
+        syntax::A | syntax::V => 0xb99ac4,
+        syntax::G => 0xddaa6a,
+        syntax::I => 0x8fd6b0,
+        syntax::D => 0xe39b93,
+        syntax::H => 0xd3a95f,
+        _ => 0xe9ebef,
+    };
+    let l = match t {
+        syntax::K => 0x84501f,
+        syntax::S => 0x47643a,
+        syntax::N => 0x75551a,
+        syntax::C => 0x787565,
+        syntax::Y => 0x2f6b62,
+        syntax::F => 0x6d4c7c,
+        syntax::A | syntax::V => 0x7c5a7f,
+        syntax::G => 0x84501f,
+        syntax::I => 0x2f7a58,
+        syntax::D => 0xb25049,
+        syntax::H => 0x94662a,
+        _ => 0x1d1f23,
+    };
+    c(d, l)
+}
+
+/// diff 行的底色
+pub fn tok_bg(t: u8) -> Color32 {
+    match t {
+        syntax::I => {
+            if light() {
+                Color32::from_rgba_unmultiplied(47, 122, 88, 22)
+            } else {
+                Color32::from_rgba_unmultiplied(99, 195, 154, 20)
+            }
+        }
+        syntax::D => {
+            if light() {
+                Color32::from_rgba_unmultiplied(178, 80, 73, 22)
+            } else {
+                Color32::from_rgba_unmultiplied(223, 116, 108, 20)
+            }
+        }
+        _ => Color32::TRANSPARENT,
+    }
+}
+
+/* ---------------------------------------------------------------- git 标记 */
 
 pub fn git_color(s: &str) -> Color32 {
     match s {
-        "M" => M,
-        "A" => A,
-        "D" => D,
-        "U" => U,
-        "R" => R,
-        _ => DIM,
+        "M" => brass(),
+        "A" => jade(),
+        "D" => rose(),
+        "U" => jade(),
+        _ => muted(),
     }
 }
+
+/* ---------------------------------------------------------------- 字体 */
 
 fn cjk() -> Option<(&'static str, Vec<u8>, u32)> {
     #[cfg(target_os = "windows")]
@@ -131,9 +288,7 @@ pub fn setup(ctx: &egui::Context) {
     if let Some((name, bytes, idx)) = cjk() {
         let mut fd = egui::FontData::from_owned(bytes);
         fd.index = idx;
-        fonts
-            .font_data
-            .insert(name.to_owned(), fd);
+        fonts.font_data.insert(name.to_owned(), fd);
         fonts
             .families
             .entry(FontFamily::Proportional)
@@ -146,38 +301,59 @@ pub fn setup(ctx: &egui::Context) {
             .push(name.to_owned());
     }
     ctx.set_fonts(fonts);
+    apply(ctx);
+}
 
-    let mut v = egui::Visuals::dark();
-    v.panel_fill = BG;
-    v.window_fill = Color32::from_rgb(0x25, 0x25, 0x26);
-    v.extreme_bg_color = Color32::from_rgb(0x18, 0x18, 0x18);
-    v.faint_bg_color = HOVER;
-    v.override_text_color = Some(FG);
-    v.window_stroke = egui::Stroke::new(1.0, Color32::from_rgb(0x3c, 0x3c, 0x3c));
-    v.selection.bg_fill = Color32::from_rgb(0x26, 0x4f, 0x78);
-    v.selection.stroke = egui::Stroke::new(1.0, Color32::from_rgb(0x8a, 0xc8, 0xff));
-    v.widgets.noninteractive.bg_fill = BG;
-    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, LINE);
-    v.widgets.inactive.bg_fill = Color32::from_rgb(0x3c, 0x3c, 0x3c);
+/// 把当前主题写进 egui 的 Visuals / Style。切主题后调用一次即可。
+pub fn apply(ctx: &egui::Context) {
+    let mut v = if light() {
+        egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
+    };
+    v.panel_fill = bg();
+    v.window_fill = panel2();
+    v.extreme_bg_color = code_bg();
+    v.faint_bg_color = hover();
+    v.override_text_color = Some(text());
+    v.window_stroke = egui::Stroke::new(1.0, line2());
+    v.window_rounding = egui::Rounding::same(12.0);
+    v.menu_rounding = egui::Rounding::same(10.0);
+    v.selection.bg_fill = sel2();
+    v.selection.stroke = egui::Stroke::new(1.0, brass());
+    v.widgets.noninteractive.bg_fill = panel();
+    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, line());
+    v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, text());
+    v.widgets.noninteractive.rounding = egui::Rounding::same(8.0);
+    v.widgets.inactive.bg_fill = raise();
     v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
-    v.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-    v.widgets.hovered.bg_fill = Color32::from_rgb(0x48, 0x48, 0x48);
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x2f, 0x2f, 0x30);
-    v.widgets.hovered.bg_stroke = egui::Stroke::NONE;
-    v.widgets.active.bg_fill = Color32::from_rgb(0x09, 0x47, 0x71);
-    v.widgets.active.weak_bg_fill = Color32::from_rgb(0x37, 0x3b, 0x3d);
-    v.widgets.active.bg_stroke = egui::Stroke::NONE;
+    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line());
+    v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, muted());
+    v.widgets.inactive.rounding = egui::Rounding::same(8.0);
+    v.widgets.hovered.bg_fill = panel2();
+    v.widgets.hovered.weak_bg_fill = hover();
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, line2());
+    v.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, text());
+    v.widgets.hovered.rounding = egui::Rounding::same(8.0);
+    v.widgets.active.bg_fill = sel2();
+    v.widgets.active.weak_bg_fill = sel();
+    v.widgets.active.bg_stroke = egui::Stroke::new(1.0, brass());
+    v.widgets.active.fg_stroke = egui::Stroke::new(1.0, text());
+    v.widgets.active.rounding = egui::Rounding::same(8.0);
+    v.widgets.open.bg_fill = panel2();
+    v.widgets.open.weak_bg_fill = hover();
+    v.widgets.open.rounding = egui::Rounding::same(8.0);
     ctx.set_visuals(v);
 
     let mut style = (*ctx.style()).clone();
-    style.spacing.item_spacing = egui::vec2(6.0, 4.0);
-    style.spacing.button_padding = egui::vec2(7.0, 3.0);
+    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    style.spacing.button_padding = egui::vec2(9.0, 4.0);
     style.spacing.scroll.bar_width = 9.0;
     style.spacing.scroll.floating = true;
     style.text_styles = [
         (TextStyle::Small, FontId::proportional(11.0)),
-        (TextStyle::Body, FontId::proportional(13.0)),
-        (TextStyle::Button, FontId::proportional(12.5)),
+        (TextStyle::Body, FontId::proportional(12.5)),
+        (TextStyle::Button, FontId::proportional(12.0)),
         (TextStyle::Heading, FontId::proportional(15.0)),
         (TextStyle::Monospace, syntax::font()),
     ]

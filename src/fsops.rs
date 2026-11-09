@@ -237,6 +237,16 @@ pub fn read_file(root: &Path, rel: &str) -> Result<FilePayload, String> {
     })
 }
 
+/// 覆盖写入（仅用于 Markdown 编辑保存）。路径同样过安全校验。
+pub fn write_file(root: &Path, rel: &str, content: &str) -> Result<u64, String> {
+    let full = safe_join(root, rel)?;
+    if !full.is_file() {
+        return Err("目标不是文件".into());
+    }
+    fs::write(&full, content).map_err(|e| format!("保存失败：{}", e))?;
+    Ok(content.len() as u64)
+}
+
 /// 全量文件名索引（Ctrl+P 用）
 pub fn list_all(root: &Path) -> (Vec<String>, bool) {
     let mut out = Vec::new();

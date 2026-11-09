@@ -5,6 +5,7 @@ mod app;
 mod conf;
 mod fsops;
 mod gitops;
+mod md;
 mod syntax;
 mod theme;
 mod tree;

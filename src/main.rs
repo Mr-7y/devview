@@ -25,6 +25,7 @@ fn main() -> eframe::Result<()> {
             .with_min_inner_size([760.0, 460.0])
             .with_title("Ai-View")
             .with_decorations(false)
+            .with_position([0.0, 0.0])
             .with_icon(egui::IconData {
                 rgba: include_bytes!("icon.rgba").to_vec(),
                 width: 64,

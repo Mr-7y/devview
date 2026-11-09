@@ -13,7 +13,7 @@ pub enum Block {
     Heading(u8, String),
     Para(String),
     Quote(Vec<String>),
-    Code(String, String),
+    Code(String, String, Vec<crate::syntax::Line>),
     Bullet {
         indent: usize,
         order: Option<usize>,
@@ -52,7 +52,9 @@ pub fn parse(src: &str) -> Vec<Block> {
             if i < lines.len() {
                 i += 1;
             }
-            out.push(Block::Code(lang, buf));
+            let lines =
+                crate::syntax::tokenize(&buf, if lang.is_empty() { "plaintext" } else { &lang });
+            out.push(Block::Code(lang, buf, lines));
             continue;
         }
 
@@ -408,7 +410,7 @@ pub fn render(ui: &mut Ui, blocks: &[Block]) {
                 });
                 ui.add_space(8.0);
             }
-            Block::Code(lang, code) => {
+            Block::Code(lang, code, lines) => {
                 ui.add_space(4.0);
                 Frame::none()
                     .fill(theme::panel2())
@@ -426,8 +428,7 @@ pub fn render(ui: &mut Ui, blocks: &[Block]) {
                             );
                             ui.add_space(4.0);
                         }
-                        let lines = crate::syntax::tokenize(code, lang_or_plain(lang));
-                        let job = crate::syntax::build_job(&lines, false, ui.available_width());
+                        let job = crate::syntax::build_job(lines, false, ui.available_width());
                         egui::ScrollArea::horizontal()
                             .id_salt(("mdcode", code.as_ptr() as usize, code.len()))
                             .auto_shrink([false, true])
@@ -506,10 +507,3 @@ pub fn render(ui: &mut Ui, blocks: &[Block]) {
     }
 }
 
-fn lang_or_plain(lang: &str) -> &str {
-    if lang.is_empty() {
-        "plaintext"
-    } else {
-        lang
-    }
-}

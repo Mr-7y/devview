@@ -1874,12 +1874,20 @@ impl App {
                     .auto_shrink([false, false]);
 
                 if let Some(buf) = edit_buf.as_mut() {
+                    // 内容级缓存：内容不变时零 tokenize，输入大文件不卡
+                    let edit_cache: RefCell<(String, Option<Arc<egui::Galley>>)> =
+                        RefCell::new((String::new(), None));
                     let mut layouter =
                         |ui: &egui::Ui, content: &str, wrap_width: f32| -> Arc<egui::Galley> {
                             let w = if wrap { wrap_width.max(80.0) } else { 0.0 };
-                            let ls = syntax::tokenize(content, lang);
-                            let job = syntax::build_job(&ls, wrap, w);
-                            ui.fonts(|f| f.layout_job(job))
+                            let mut c = edit_cache.borrow_mut();
+                            if c.0 != content {
+                                let ls = syntax::tokenize(content, lang);
+                                let job = syntax::build_job(&ls, wrap, w);
+                                c.1 = Some(ui.fonts(|f| f.layout_job(job)));
+                                c.0 = content.to_string();
+                            }
+                            c.1.clone().unwrap()
                         };
                     let out = area.show(ui, |ui| {
                         ui.spacing_mut().item_spacing = Vec2::ZERO;

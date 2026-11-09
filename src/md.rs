@@ -390,9 +390,9 @@ pub fn render(ui: &mut Ui, blocks: &[Block]) {
             Block::Quote(lines) => {
                 let text = lines.join("\n");
                 ui.horizontal_top(|ui| {
+                    let h = (lines.len() as f32 * 21.0).max(18.0);
                     let (r, _) =
-                        ui.allocate_exact_size(Vec2::new(3.0, 18.0), egui::Sense::hover());
-                    let h = ui.available_height().max(18.0);
+                        ui.allocate_exact_size(Vec2::new(3.0, h), egui::Sense::hover());
                     ui.painter().rect_filled(
                         egui::Rect::from_min_size(r.min, Vec2::new(3.0, h)),
                         2.0,

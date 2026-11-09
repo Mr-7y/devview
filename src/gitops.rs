@@ -23,7 +23,7 @@ fn cache() -> &'static Mutex<HashMap<String, (Instant, GitInfo)>> {
     C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 执行 git 命令，带超时；Windows 下不弹黑框
+/// 执行 git 命令，带超时；Windows 下不弹黑框。非零退出码返回 None。
 fn run(root: &Path, args: &[&str], timeout_ms: u64) -> Option<String> {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
@@ -43,9 +43,13 @@ fn run(root: &Path, args: &[&str], timeout_ms: u64) -> Option<String> {
 
     let mut child = cmd.spawn().ok()?;
     let start = Instant::now();
+    let mut ok = false;
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(st)) => {
+                ok = st.success();
+                break;
+            }
             Ok(None) => {
                 if start.elapsed() > Duration::from_millis(timeout_ms) {
                     let _ = child.kill();
@@ -59,6 +63,9 @@ fn run(root: &Path, args: &[&str], timeout_ms: u64) -> Option<String> {
     }
     let mut out = Vec::new();
     child.stdout.take()?.read_to_end(&mut out).ok()?;
+    if !ok {
+        return None;
+    }
     Some(String::from_utf8_lossy(&out).to_string())
 }
 
@@ -181,7 +188,7 @@ pub fn status(root: &Path, force: bool) -> GitInfo {
 /// 提交已跟踪文件的改动。未跟踪文件不会被自动加入。
 pub fn commit(root: &Path, msg: &str) -> Result<String, String> {
     let out = run(root, &["commit", "-am", msg], 15000)
-        .ok_or_else(|| "提交超时或没有可提交的改动".to_string())?;
+        .ok_or_else(|| "没有可提交的改动，或提交失败".to_string())?;
     let first = out.lines().next().unwrap_or("已提交").trim().to_string();
     Ok(if first.is_empty() {
         "已提交".to_string()

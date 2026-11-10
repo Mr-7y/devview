@@ -380,7 +380,7 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.noninteractive.rounding = egui::Rounding::same(8.0);
     v.widgets.inactive.bg_fill = raise();
     v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
-    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line());
+    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line2());
     v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, muted());
     v.widgets.inactive.rounding = egui::Rounding::same(8.0);
     v.widgets.hovered.bg_fill = panel2();

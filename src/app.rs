@@ -1,6 +1,6 @@
 use crate::{conf, fsops, gitops, md, syntax, theme, tree};
 use egui::text::{LayoutJob, TextFormat};
-use egui::{Align, Align2, Color32, FontId, RichText, Sense, Stroke, Vec2};
+use egui::{Align, Align2, Color32, FontId, Rect, RichText, Sense, Stroke, Vec2};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -123,7 +123,14 @@ impl App {
             conf.active = i;
             let _ = conf::save(&conf);
         }
-        let _ = cc;
+        let app_light = if std::env::var("AI_VIEW_LIGHT").as_deref() == Ok("1") {
+            true
+        } else {
+            conf.appearance.light
+        };
+        let app_size = conf.appearance.code_size;
+        let app_ratio = conf.appearance.code_ratio;
+        let app_font = conf.appearance.code_font;
         let mut app = App {
             filter: String::new(),
             ctx: cc.egui_ctx.clone(),
@@ -168,6 +175,11 @@ impl App {
             title: "Ai-View".into(),
             title_dirty: false,
         };
+        theme::set_light(app_light);
+        theme::set_code_size(app_size);
+        theme::set_code_ratio(app_ratio);
+        theme::set_code_font(app_font);
+        theme::apply(&cc.egui_ctx);
         app.load_project();
         if let Ok(rel) = std::env::var("AI_VIEW_OPEN") {
             if !rel.is_empty() {
@@ -509,6 +521,17 @@ impl App {
         }
     }
 
+    /// 外观改动后写回配置文件
+    fn save_appearance(&mut self) {
+        self.conf.appearance = conf::Appearance {
+            light: theme::light(),
+            code_size: theme::code_size(),
+            code_ratio: theme::code_ratio(),
+            code_font: theme::code_font(),
+        };
+        let _ = conf::save(&self.conf);
+    }
+
     fn topbar(&mut self, ctx: &egui::Context) {
         let frame = egui::Frame::none()
             .fill(theme::panel())
@@ -563,6 +586,7 @@ impl App {
                                 theme::toggle();
                                 theme::apply(ctx);
                                 self.rev += 1;
+                                self.save_appearance();
                             }
                             ui.add_space(8.0);
                             sync_chip(ui, self.git_at.elapsed(), self.git.is_git);
@@ -1419,11 +1443,13 @@ impl App {
                 theme::set_light(false);
                 theme::apply(ui.ctx());
                 self.rev += 1;
+                self.save_appearance();
             }
             if seg_w(ui, "日纸", !night, half).clicked() && night {
                 theme::set_light(true);
                 theme::apply(ui.ctx());
                 self.rev += 1;
+                self.save_appearance();
             }
         });
 
@@ -1473,6 +1499,7 @@ impl App {
         if let Some(v) = chosen {
             theme::set_code_font(v);
             self.rev += 1;
+            self.save_appearance();
         }
 
         ui.add_space(18.0);
@@ -1481,10 +1508,13 @@ impl App {
         ui.horizontal(|ui| {
             ui.add_space(14.0);
             let mut v = theme::code_size();
-            let r = ui.add(egui::Slider::new(&mut v, 12.0..=20.0).show_value(false));
-            if r.changed() {
+            let (changed, done) = brass_slider(ui, &mut v, 12.0..=20.0);
+            if changed {
                 theme::set_code_size(v);
                 self.rev += 1;
+            }
+            if done {
+                self.save_appearance();
             }
         });
 
@@ -1494,10 +1524,13 @@ impl App {
         ui.horizontal(|ui| {
             ui.add_space(14.0);
             let mut v = theme::code_ratio();
-            let r = ui.add(egui::Slider::new(&mut v, 1.4..=2.3).show_value(false));
-            if r.changed() {
+            let (changed, done) = brass_slider(ui, &mut v, 1.4..=2.3);
+            if changed {
                 theme::set_code_ratio(v);
                 self.rev += 1;
+            }
+            if done {
+                self.save_appearance();
             }
         });
 
@@ -1511,6 +1544,7 @@ impl App {
                 .inner_margin(egui::Margin::same(12.0))
                 .show(ui, |ui| {
                     ui.set_width((w - 34.0).max(70.0));
+                    ui.vertical(|ui| {
                     ui.label(
                         RichText::new("let theme = Night;")
                             .size(theme::code_size())
@@ -1530,6 +1564,7 @@ impl App {
                             .size(9.5)
                             .color(theme::faint()),
                     );
+                    });
                 });
         });
         ui.add_space(10.0);
@@ -1542,6 +1577,7 @@ impl App {
                 theme::set_light(false);
                 theme::apply(ui.ctx());
                 self.rev += 1;
+                self.save_appearance();
             }
         });
     }
@@ -3232,19 +3268,38 @@ fn pill_tab(ui: &mut egui::Ui, text: &str, on: bool) -> bool {
     resp.clicked()
 }
 
+/// 窗口控制按钮：自绘矢量图标（最小化 / 最大化 / 关闭），不用文字字符。
+/// 关闭键悬停红底白叉，图标随窗口按钮区整体放大。
 fn win_btn(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(46.0, 30.0), Sense::click());
+    let close = text == "×";
     if resp.hovered() {
-        let c = if text == "×" { theme::rose() } else { theme::hover() };
-        ui.painter().rect_filled(rect, 6.0, c);
+        let bg = if close { theme::rose() } else { theme::hover() };
+        ui.painter().rect_filled(rect, 0.0, bg);
     }
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        text,
-        FontId::proportional(12.0),
-        if resp.hovered() { theme::text() } else { theme::muted() },
-    );
+    let p = ui.painter();
+    let c = rect.center();
+    let base = if close && resp.hovered() {
+        Color32::from_rgb(0xff, 0xff, 0xff)
+    } else if resp.hovered() {
+        theme::text()
+    } else {
+        theme::muted()
+    };
+    let st = Stroke::new(1.7, base);
+    match text {
+        "—" => {
+            p.line_segment([c + Vec2::new(-5.5, 0.0), c + Vec2::new(5.5, 0.0)], st);
+        }
+        "口" => {
+            p.rect_stroke(Rect::from_center_size(c, Vec2::new(11.0, 11.0)), 2.5, st);
+        }
+        _ => {
+            let d = 5.5;
+            p.line_segment([c + Vec2::new(-d, -d), c + Vec2::new(d, d)], st);
+            p.line_segment([c + Vec2::new(-d, d), c + Vec2::new(d, -d)], st);
+        }
+    }
     resp
 }
 
@@ -3284,6 +3339,45 @@ fn icon_panels2(ui: &mut egui::Ui, on: bool) -> egui::Response {
         col,
     );
     resp
+}
+
+/// 设计稿风格的滑块：浅轨道 + 黄铜填充 + 实心圆手柄（egui 默认滑块在日纸下几乎看不见）。
+fn brass_slider(ui: &mut egui::Ui, val: &mut f32, range: std::ops::RangeInclusive<f32>) -> (bool, bool) {
+    let (min, max) = (*range.start(), *range.end());
+    let w = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 22.0), Sense::click_and_drag());
+    let p = ui.painter();
+    let frac = ((*val - min) / (max - min)).clamp(0.0, 1.0);
+    let y = rect.center().y;
+    let track = Rect::from_min_max(
+        egui::pos2(rect.left() + 7.0, y - 1.5),
+        egui::pos2(rect.right() - 7.0, y + 1.5),
+    );
+    p.rect_filled(track, 1.5, theme::line2());
+    let tw = track.width() * frac;
+    if tw > 0.0 {
+        p.rect_filled(
+            Rect::from_min_max(egui::pos2(track.left(), y - 1.5), egui::pos2(track.left() + tw, y + 1.5)),
+            1.5,
+            theme::brass(),
+        );
+    }
+    let cx = track.left() + tw;
+    p.circle_filled(egui::pos2(cx, y), 7.0, theme::brass());
+    p.circle_filled(egui::pos2(cx, y), 3.0, theme::raise());
+    let mut changed = false;
+    if resp.dragged() || resp.clicked() {
+        if let Some(pos) = resp.interact_pointer_pos() {
+            let f = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0);
+            let nv = min + f * (max - min);
+            if (nv - *val).abs() > 0.001 {
+                *val = nv;
+                changed = true;
+            }
+        }
+    }
+    // 松手才算一次交互结束，调用方据此写盘，避免拖动期间每帧落盘
+    (changed, resp.drag_stopped() || resp.drag_released())
 }
 
 fn icon_theme(ui: &mut egui::Ui, night: bool) -> egui::Response {

@@ -9,12 +9,40 @@ pub struct Project {
     pub path: String,
 }
 
+/// 外观设置（随配置持久化，设计稿约定"外观配置自动保存"）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Appearance {
+    #[serde(default)]
+    pub light: bool,
+    #[serde(default = "def_size")]
+    pub code_size: f32,
+    #[serde(default = "def_ratio")]
+    pub code_ratio: f32,
+    #[serde(default)]
+    pub code_font: u8,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Appearance { light: false, code_size: def_size(), code_ratio: def_ratio(), code_font: 0 }
+    }
+}
+
+fn def_size() -> f32 {
+    15.0
+}
+fn def_ratio() -> f32 {
+    1.9
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Conf {
     #[serde(default)]
     pub projects: Vec<Project>,
     #[serde(default)]
     pub active: usize,
+    #[serde(default)]
+    pub appearance: Appearance,
 }
 
 pub fn conf_path() -> PathBuf {

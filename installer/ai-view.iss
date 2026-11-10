@@ -4,12 +4,15 @@
 [Setup]
 AppId={{B3F7A1E2-5C4D-4E9B-8A26-71D3F0C59E44}
 AppName=Ai-View
-AppVersion=1.3.1
+#ifndef APPVER
+#define APPVER "1.3.1"
+#endif
+AppVersion={#APPVER}
 AppPublisher=Mr.7y
 DefaultDirName={autopf}\Ai-View
 DefaultGroupName=Ai-View
 OutputDir=..\dist
-OutputBaseFilename=Ai-View-v1.3.1-windows-x64-setup
+OutputBaseFilename=Ai-View-{#APPVER}-windows-x64-setup
 Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -18,7 +21,7 @@ UninstallDisplayIcon={app}\ai-view.exe
 SetupIconFile=..\icons\icon.ico
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 
 [Files]
 Source: "..\dist\Ai-View.exe"; DestDir: "{app}"; Flags: ignoreversion

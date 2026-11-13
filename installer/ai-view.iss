@@ -6,7 +6,7 @@ AppId={{B3F7A1E2-5C4D-4E9B-8A26-71D3F0C59E44}
 AppName=Ai-View
 AppPublisher=Mr.7y
 #ifndef APPVER
-#define APPVER "1.3.1"
+#define APPVER "1.4.0"
 #endif
 AppVersion={#APPVER}
 DefaultDirName={autopf}\Ai-View

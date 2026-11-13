@@ -24,8 +24,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>Ai-View</string>
     <key>CFBundleDisplayName</key><string>Ai-View</string>
     <key>CFBundleIdentifier</key><string>com.ai-view.app</string>
-    <key>CFBundleVersion</key><string>1.3.1</string>
-    <key>CFBundleShortVersionString</key><string>1.3.1</string>
+    <key>CFBundleVersion</key><string>1.4.0</string>
+    <key>CFBundleShortVersionString</key><string>1.4.0</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleExecutable</key><string>Ai-View</string>
     <key>CFBundleIconFile</key><string>icon.icns</string>

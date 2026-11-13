@@ -13,6 +13,10 @@ mod tree;
 #[cfg(debug_assertions)]
 mod shot;
 
+// mimalloc：全局分配器（egui 官方性能建议）
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args()
         .skip(1)

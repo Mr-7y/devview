@@ -822,6 +822,33 @@ pub fn font() -> FontId {
     FontId::monospace(size)
 }
 
+/// 编辑态轻量排版：跳过语法着色，打字时不因全篇 tokenize 卡顿。
+/// 编辑仅对 Markdown 开放，预览态仍走完整 build_job。
+pub fn plain_job(text: &str, wrap: bool, width: f32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap = if wrap {
+        TextWrapping {
+            max_width: width.max(80.0),
+            max_rows: usize::MAX,
+            break_anywhere: true,
+            overflow_character: None,
+        }
+    } else {
+        TextWrapping::no_max_width()
+    };
+    job.append(
+        text,
+        0.0,
+        TextFormat {
+            font_id: font(),
+            color: crate::theme::text(),
+            line_height: Some(crate::theme::line_height()),
+            ..Default::default()
+        },
+    );
+    job
+}
+
 pub fn build_job(lines: &[Line], wrap: bool, width: f32) -> egui::text::LayoutJob {
     let f = font();
     let mut job = egui::text::LayoutJob::default();

@@ -22,6 +22,8 @@ pub struct Row {
 
 pub struct Tree {
     pub nodes: Vec<Node>,
+    /// 结构变化计数（展开/折叠/重载），树行缓存以此判断失效
+    pub rev: u64,
 }
 
 fn build(name: String, path: String, dir: bool) -> Node {
@@ -42,7 +44,7 @@ impl Tree {
                 nodes.push(build(e.name, e.path, e.dir));
             }
         }
-        Tree { nodes }
+        Tree { nodes, rev: 1 }
     }
 
     fn find<'a>(nodes: &'a mut Vec<Node>, path: &str) -> Option<&'a mut Node> {
@@ -69,6 +71,7 @@ impl Tree {
             }
             if n.open {
                 n.open = false;
+                self.rev += 1;
                 return;
             }
             if n.kids.is_none() {
@@ -83,6 +86,7 @@ impl Tree {
                 }
             }
             n.open = true;
+            self.rev += 1;
         }
     }
 
@@ -91,6 +95,7 @@ impl Tree {
         if let Ok(list) = fsops::list_dir(root, "") {
             let fresh: Vec<Node> = list.into_iter().map(|e| build(e.name, e.path, e.dir)).collect();
             self.nodes = fresh;
+            self.rev += 1;
         }
     }
 

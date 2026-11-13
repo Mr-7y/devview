@@ -4,11 +4,11 @@
 [Setup]
 AppId={{B3F7A1E2-5C4D-4E9B-8A26-71D3F0C59E44}
 AppName=Ai-View
+AppPublisher=Mr.7y
 #ifndef APPVER
 #define APPVER "1.3.1"
 #endif
 AppVersion={#APPVER}
-AppPublisher=Mr.7y
 DefaultDirName={autopf}\Ai-View
 DefaultGroupName=Ai-View
 OutputDir=..\dist

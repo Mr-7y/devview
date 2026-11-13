@@ -62,7 +62,7 @@ svg{display:block}
 :focus-visible{outline:1px solid var(--brass);outline-offset:2px}
 
 .app{
-  height:100vh;display:grid;grid-template-rows:54px 66px minmax(0,1fr) 30px;
+  height:100vh;display:grid;grid-template-rows:54px 66px minmax(0,1fr);
   position:relative;z-index:1;
 }
 .app::before{
@@ -95,16 +95,16 @@ svg{display:block}
 .word{font-size:13.5px;font-weight:600;letter-spacing:.01em;color:var(--text)}
 .word i{font-style:normal;color:var(--brass)}
 .project{
-  height:28px;display:flex;align-items:center;gap:7px;padding:0 9px;
+  height:30px;display:flex;align-items:center;gap:7px;padding:0 9px;
   border:1px solid var(--line);border-radius:var(--r-s);
   color:var(--muted);font-size:11px;transition:border-color .15s var(--ease),background .15s var(--ease);
 }
 .project:hover{border-color:var(--line-2);background:var(--panel-2)}
 .project .icon{color:var(--faint)}
-.proj-name{color:var(--text);font-weight:500}
-.proj-branch{font-family:var(--mono);font-size:9.5px;color:var(--faint);padding-left:7px;border-left:1px solid var(--line)}
+.proj-name{color:var(--text);font-weight:500;line-height:18px}
+.proj-branch{font-family:var(--mono);font-size:9.5px;line-height:18px;color:var(--faint);padding-left:7px;border-left:1px solid var(--line)}
 .cmdbar{
-  margin:0 auto;flex:1;max-width:470px;height:31px;
+  margin:0 auto;flex:1;max-width:470px;height:30px;
   display:flex;align-items:center;gap:7px;padding:0 9px;
   background:var(--panel-2);border:1px solid var(--line);border-radius:9px;
   color:var(--faint);font-size:11px;cursor:text;
@@ -118,24 +118,15 @@ kbd{
   background:var(--panel);border:1px solid var(--line-2);border-radius:4px;padding:3px 5px;
 }
 .top-right{display:flex;align-items:center;gap:6px}
-.syncchip{display:flex;align-items:center;gap:6px;margin-right:6px;font-size:10px;color:var(--faint);white-space:nowrap}
-.syncchip .dot{color:var(--jade);box-shadow:0 0 0 3px rgba(99,195,154,.12)}
-.syncchip .ago{color:var(--faint);opacity:.75}
+.topbar .iconbtn{width:30px;height:30px}
 .iconbtn{
   width:29px;height:29px;border-radius:8px;display:grid;place-items:center;color:var(--muted);
   transition:background .14s var(--ease),color .14s var(--ease);
 }
 .iconbtn:hover{background:var(--panel-2);color:var(--text)}
+.iconbtn[aria-pressed="true"]{color:var(--brass);background:var(--brass-bg)}
 [data-theme="dark"] .i-sun{display:none}
 [data-theme="light"] .i-moon{display:none}
-.avatar{
-  width:28px;height:28px;border-radius:50%;display:grid;place-items:center;
-  font-family:var(--mono);font-size:9.5px;font-weight:600;color:var(--on-brass);
-  background:linear-gradient(145deg,var(--brass-2),var(--brass));
-  box-shadow:inset 0 0 0 1px rgba(0,0,0,.12);margin-left:2px;
-}
-.avatar.sm{width:30px;height:30px;font-size:10px}
-
 /* ---------------------------------------------------------------- git band */
 .gitbar{
   display:flex;align-items:center;gap:12px;padding:0 14px;
@@ -182,8 +173,14 @@ kbd{
 .btn.primary:disabled{opacity:.35;cursor:not-allowed}
 
 /* -------------------------------------------------------------- workbench */
-.workbench{display:grid;grid-template-columns:268px minmax(0,1fr) 312px;min-height:0}
-.sidebar{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--line)}
+.workbench{
+  --left:268px;--right:312px;
+  display:grid;grid-template-columns:var(--left) minmax(0,1fr) var(--right);
+  min-height:0;transition:grid-template-columns .22s var(--ease);
+}
+.workbench.fold-left{--left:0px}
+.workbench.fold-right{--right:0px}
+.sidebar{display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden;background:var(--panel);border-right:1px solid var(--line)}
 .side-tabs{height:42px;display:flex;align-items:flex-start;gap:2px;padding:8px 8px 0;border-bottom:1px solid var(--line);flex:none}
 .side-tab{height:26px;padding:0 9px;border-radius:6px;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);transition:background .14s,color .14s}
 .side-tab:hover{color:var(--text)}
@@ -369,14 +366,12 @@ kbd{
 .readme .hr{height:1px;background:var(--line);margin:26px 0}
 
 /* -------------------------------------------------------------------- rail */
-.rail{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-left:1px solid var(--line)}
+.rail{display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden;background:var(--panel);border-left:1px solid var(--line)}
 .rail-tabs{height:42px;display:flex;align-items:center;gap:2px;padding:0 8px;border-bottom:1px solid var(--line);flex:none}
 .rail-tab{height:26px;padding:0 10px;border-radius:6px;font-size:11px;color:var(--muted);transition:background .14s,color .14s}
 .rail-tab:hover{color:var(--text)}
 .rail-tab.active{background:var(--panel-2);color:var(--text)}
 .rail-body{flex:1;overflow:auto;padding:16px 16px 26px;min-height:0}
-.rail-foot{flex:none;border-top:1px solid var(--line);padding:9px 16px;display:flex;align-items:center;gap:6px;font-size:9px;color:var(--faint)}
-.rail-foot .dot{color:var(--jade);box-shadow:0 0 0 3px rgba(99,195,154,.1)}
 .panel-kicker{
   font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;
   color:var(--faint);margin:0 0 10px;
@@ -452,28 +447,6 @@ input[type="range"]::-webkit-slider-thumb{
 .pkg .psize{margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--muted)}
 .meta-row{display:flex;align-items:center;justify-content:space-between;padding:7px 0;font-size:10px;color:var(--faint);border-bottom:1px solid var(--line)}
 .meta-row b{font-weight:500;color:var(--muted);font-family:var(--mono);font-size:9.5px}
-.author{display:flex;align-items:center;gap:9px;margin-top:16px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}
-.author .who{flex:1}
-.author .who b{display:block;font-size:11px;font-weight:600;color:var(--text)}
-.author .who span{font-size:9px;color:var(--faint)}
-.author .iconbtn{margin-left:auto}
-
-/* --------------------------------------------------------------- statusbar */
-.statusbar{
-  display:flex;align-items:center;gap:12px;padding:0 12px;
-  background:var(--panel);border-top:1px solid var(--line);
-  font-size:9.5px;color:var(--faint);white-space:nowrap;
-}
-.st-left,.st-right{display:flex;align-items:center;gap:7px}
-.st-left .icon{width:11px;height:11px;color:var(--brass)}
-.st-center{margin:0 auto;display:flex;align-items:center;gap:6px}
-.st-center .dot{color:var(--jade)}
-.st-center .dot.brass{color:var(--brass)}
-.st-right{margin-left:auto}
-.statusbar .sep{width:1px;height:11px;background:var(--line-2)}
-.statusbar .ver{color:var(--muted);font-family:var(--mono)}
-.statusbar .author-mark{color:var(--brass);font-family:var(--mono)}
-
 /* ------------------------------------------------------------------ palette */
 .palette{
   position:fixed;inset:0;z-index:50;display:grid;justify-items:center;align-items:start;padding-top:110px;
@@ -515,7 +488,7 @@ input[type="range"]::-webkit-slider-thumb{
 }
 @media (max-width:1080px){
   .rail{display:none}
-  .workbench{grid-template-columns:250px minmax(0,1fr)}
+  .workbench{--left:250px;--right:0px}
 }
 </style>
 </head>
@@ -537,6 +510,8 @@ input[type="range"]::-webkit-slider-thumb{
     <symbol id="i-check" viewBox="0 0 16 16"><path d="M3.2 8.4l3.2 3.2 6.4-7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-download" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.4v8"/><path d="M4.6 7.6L8 11l3.4-3.4"/><path d="M2.8 13.6h10.4"/></g></symbol>
     <symbol id="i-split" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2.6" width="12" height="10.8" rx="1.4"/><path d="M8 2.6v10.8"/></g></symbol>
+    <symbol id="i-panel-left" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.7" y="2.6" width="12.6" height="10.8" rx="1.4"/><path d="M5.6 2.6v10.8"/></g></symbol>
+    <symbol id="i-panel-right" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.7" y="2.6" width="12.6" height="10.8" rx="1.4"/><path d="M10.4 2.6v10.8"/></g></symbol>
     <symbol id="i-more" viewBox="0 0 16 16"><g fill="currentColor"><circle cx="3.4" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="12.6" cy="8" r="1"/></g></symbol>
     <symbol id="i-refresh" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 8a5.2 5.2 0 1 1-1.6-3.8"/><path d="M13.2 2.8v3.2H10"/></g></symbol>
     <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
@@ -562,13 +537,13 @@ input[type="range"]::-webkit-slider-thumb{
       <kbd>Ctrl</kbd><kbd>K</kbd>
     </div>
     <div class="top-right">
-      <div class="syncchip"><span class="dot"></span>已同步<span class="ago">2 分钟前</span></div>
+      <button class="iconbtn" id="toggleLeft" title="收起 / 展开左栏" aria-pressed="false"><svg class="icon"><use href="#i-panel-left"/></svg></button>
+      <button class="iconbtn" id="toggleRight" title="收起 / 展开右栏" aria-pressed="false"><svg class="icon"><use href="#i-panel-right"/></svg></button>
       <button class="iconbtn" id="themeBtn" title="切换夜航 / 日纸">
         <svg class="icon i-moon"><use href="#i-moon"/></svg>
         <svg class="icon i-sun"><use href="#i-sun"/></svg>
       </button>
       <button class="iconbtn" title="设置" id="gearBtn"><svg class="icon"><use href="#i-gear"/></svg></button>
-      <button class="avatar" title="Mr.7y">7y</button>
     </div>
   </header>
 
@@ -646,7 +621,7 @@ input[type="range"]::-webkit-slider-thumb{
         <div class="list-head"><span>已连接 2 个远程</span><button>管理</button></div>
         <div class="remote-detail">
           <div class="remote-top"><svg class="icon"><use href="#i-cloud"/></svg>origin<span class="state"></span></div>
-          <div class="remote-path">github.com/Mr-7y/ai-view</div>
+          <div class="remote-path">github.com/ai-view/ai-view</div>
           <div class="desc">默认远程 · 推送与拉取都走 SSH</div>
           <div class="remote-meta">↑ 2 ↓ 0<span class="mini"><button title="拉取"><svg class="icon sm"><use href="#i-arrow-down"/></svg></button><button title="推送"><svg class="icon sm"><use href="#i-arrow-up"/></svg></button></span></div>
         </div>
@@ -663,7 +638,7 @@ input[type="range"]::-webkit-slider-thumb{
         <div class="side-label">远程仓库<button id="fetchBtn">获取全部</button></div>
         <div class="remote-card">
           <div class="remote-top"><svg class="icon"><use href="#i-cloud"/></svg>origin<span class="state"></span></div>
-          <div class="remote-path">github.com/Mr-7y/ai-view</div>
+          <div class="remote-path">github.com/ai-view/ai-view</div>
           <div class="remote-meta">main → origin/main<span class="mini"><button title="拉取"><svg class="icon sm"><use href="#i-arrow-down"/></svg></button><button title="推送"><svg class="icon sm"><use href="#i-arrow-up"/></svg></button></span></div>
         </div>
       </div>
@@ -789,7 +764,7 @@ pub fn apply(&self, ctx: &egui::Context) {
               <g font-family="'JetBrains Mono','Cascadia Code',monospace">
                 <text x="58" y="438" fill="#e9ebef" font-size="35" letter-spacing="7">AI-VIEW</text>
                 <text x="60" y="466" fill="#8d95a2" font-size="10" letter-spacing="3.2">READ · EDIT · SHIP</text>
-                <text x="60" y="94" fill="#d3a95f" font-size="9" letter-spacing="2.6">A CODE BROWSER BY MR.7Y</text>
+                <text x="60" y="94" fill="#d3a95f" font-size="9" letter-spacing="2.6">A MINIMAL CODE BROWSER</text>
               </g>
               <g stroke="#d3a95f" stroke-opacity=".5">
                 <path d="M58 500h26M58 500v-26" fill="none"/>
@@ -803,7 +778,7 @@ pub fn apply(&self, ctx: &egui::Context) {
       <div class="pane-readme" id="paneReadme" hidden>
         <article class="readme">
           <h1>Ai-View</h1>
-          <p class="sub">极简代码浏览器 · 可编辑 · 双主题 · 顶部 git 工作流 · by Mr.7y</p>
+          <p class="sub">极简代码浏览器 · 可编辑 · 双主题 · 顶部 git 工作流</p>
           <p>打开本地目录，树形浏览、语法高亮、变更标记与单文件 diff 都在一个窗口里完成。默认行高 1.9，代码区左右留白 26px，长时间阅读不压眼。</p>
           <h2>安装</h2>
           <pre><code># Windows
@@ -822,8 +797,6 @@ chmod +x Ai-View-1.0.0-x86_64.AppImage</code></pre>
             <li><code>Ctrl/Cmd + Enter</code> 提交暂存改动</li>
             <li><code>F5</code> 刷新 git 状态</li>
           </ul>
-          <div class="hr"></div>
-          <p>作者 <strong>Mr.7y</strong> · MIT License · github.com/Mr-7y/ai-view</p>
         </article>
       </div>
     </section>
@@ -920,33 +893,11 @@ chmod +x Ai-View-1.0.0-x86_64.AppImage</code></pre>
           <div class="meta-row" style="margin-top:10px"><span>更新通道</span><b>稳定版</b></div>
           <div class="meta-row"><span>许可</span><b>MIT</b></div>
           <div class="meta-row"><span>最低系统</span><b>Win10 / macOS 12</b></div>
-          <div class="author">
-            <span class="avatar sm">7y</span>
-            <div class="who"><b>Mr.7y</b><span>作者 · 独立开发者</span></div>
-            <button class="iconbtn sm" id="repoLink" title="打开仓库"><svg class="icon sm"><use href="#i-external"/></svg></button>
-          </div>
         </div>
       </div>
-      <div class="rail-foot"><span class="dot"></span>外观配置自动保存 · 安装版 v1.0.0</div>
     </aside>
   </main>
 
-  <footer class="statusbar">
-    <div class="st-left">
-      <svg class="icon"><use href="#i-branch"/></svg><span>main</span>
-      <span class="sep"></span><span>↑ 2 ↓ 0</span>
-      <span class="sep"></span><span>origin</span>
-    </div>
-    <div class="st-center" id="stState"><span class="dot"></span>已保存</div>
-    <div class="st-right">
-      <span id="caret">Ln 8, Col 5</span>
-      <span class="sep"></span><span id="stEnc">UTF-8</span>
-      <span class="sep"></span><span id="stEol">LF</span>
-      <span class="sep"></span><span id="stLang">Rust</span>
-      <span class="sep"></span><span>安装版</span><span class="sep"></span><span class="ver">v1.0.0</span>
-      <span class="sep"></span><span class="author-mark">Mr.7y</span>
-    </div>
-  </footer>
 </div>
 
 <div class="palette" id="palette" hidden>
@@ -1008,8 +959,6 @@ pub fn paper() -> Tokens {
   var gutter = $("gutter");
   var gmarks = $("gmarks");
   var currentLine = $("currentLine");
-  var caret = $("caret");
-  var stState = $("stState");
   var toastEl = $("toast");
   var toastMsg = $("toastMsg");
   var toastTimer = null;
@@ -1078,8 +1027,6 @@ pub fn paper() -> Tokens {
     var before = ta.value.slice(0, pos);
     var arr = before.split("\n");
     var ln = arr.length;
-    var col = arr[arr.length - 1].length + 1;
-    caret.textContent = "Ln " + ln + ", Col " + col;
     var lh = lineHeight();
     var top = 20 + (ln - 1) * lh;
     currentLine.style.top = top + "px";
@@ -1099,7 +1046,6 @@ pub fn paper() -> Tokens {
     var dirty = v !== f.base;
     var tab = document.querySelector('.etab[data-tab="' + cur + '"]');
     if (tab) { tab.classList.toggle("is-dirty", dirty); }
-    stState.innerHTML = '<span class="dot' + (dirty ? " brass" : "") + '"></span>' + (dirty ? "有未保存改动" : "已保存");
     $("crumbLines").textContent = n + " 行";
     renderMarks();
     updateCaret();
@@ -1151,19 +1097,9 @@ pub fn paper() -> Tokens {
     $("crumbDir").hidden = !meta[2];
     $("sep1").hidden = !meta[2];
     $("crumbMeta").hidden = !isCode;
-    $("stLang").textContent = meta[1];
     document.querySelectorAll(".tree .row[data-file]").forEach(function(r){
       r.classList.toggle("sel", r.getAttribute("data-file") === meta[3]);
     });
-    if (!isCode) {
-      caret.textContent = key === "image" ? "2400 × 1600" : "只读预览";
-      stState.innerHTML = '<span class="dot" style="color:var(--faint)"></span>' + (key === "image" ? "图片预览" : "只读文档");
-      $("stEnc").textContent = key === "image" ? "二进制" : "UTF-8";
-      $("stEol").textContent = key === "image" ? "只读" : "LF";
-    } else {
-      $("stEnc").textContent = "UTF-8";
-      $("stEol").textContent = "LF";
-    }
   }
 
   document.querySelectorAll(".etab").forEach(function(b){
@@ -1186,6 +1122,15 @@ pub fn paper() -> Tokens {
   });
 
   /* ---------------------------------------------------------- rail tabs */
+  /* ----------------------------------------------------------- 侧栏收合 */
+  var workbench = document.querySelector(".workbench");
+  function toggleFold(side, btn){
+    var on = workbench.classList.toggle("fold-" + side);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  $("toggleLeft").addEventListener("click", function(){ toggleFold("left", this); });
+  $("toggleRight").addEventListener("click", function(){ toggleFold("right", this); });
+
   var railMap = { look: "railLook", changes: "railChanges", info: "railInfo" };
   document.querySelectorAll(".rail-tab").forEach(function(b){
     b.addEventListener("click", function(){
@@ -1327,7 +1272,6 @@ pub fn paper() -> Tokens {
   });
   $("stageAllRail").addEventListener("click", function(){ toast("已暂存全部改动"); });
   $("commitRail").addEventListener("click", function(){ toast("已提交并推送到 origin/main"); });
-  $("repoLink").addEventListener("click", function(){ toast("github.com/Mr-7y/ai-view"); });
   document.querySelectorAll(".dl").forEach(function(b, i){
     var names = ["Windows .msi", "macOS .dmg", "Linux .AppImage"];
     b.addEventListener("click", function(){ toast("开始下载 Ai-View-1.0.0 · " + names[i]); });

@@ -5,6 +5,8 @@ edition = "2021"
 description = "极简代码浏览器"
 
 [dependencies]
+# egui 官方推荐的全局分配器，约 20% 的整体性能提升
+mimalloc = "0.1"
 eframe = { version = "0.29", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 egui = "0.29"
 serde = { version = "1", features = ["derive"] }

@@ -11,8 +11,61 @@ use std::sync::OnceLock;
 static LIGHT: AtomicBool = AtomicBool::new(false);
 
 // 代码字号（x10）/ 行高倍率（x100）/ 代码字体选择
-static CODE_SIZE: AtomicU32 = AtomicU32::new(150);
-static CODE_RATIO: AtomicU32 = AtomicU32::new(190);
+static CODE_SIZE: AtomicU32 = AtomicU32::new(170);
+static CODE_RATIO: AtomicU32 = AtomicU32::new(165);
+static UI_FONT: AtomicU8 = AtomicU8::new(0);
+static MONO_UI: AtomicBool = AtomicBool::new(false);
+static BASE_FONTS: OnceLock<egui::FontDefinitions> = OnceLock::new();
+
+/// 外观面板可选界面字体（0 为系统默认回退链）
+pub fn ui_font_names() -> &'static [&'static str] {
+    &["系统无缝", "微软雅黑", "宋体", "黑体"]
+}
+
+pub fn ui_font() -> u8 {
+    UI_FONT.load(Ordering::Relaxed)
+}
+
+pub fn mono_ui() -> bool {
+    MONO_UI.load(Ordering::Relaxed)
+}
+
+pub fn set_ui_font(v: u8, ctx: &egui::Context) {
+    UI_FONT.store(v, Ordering::Relaxed);
+    rebuild_families(ctx);
+}
+
+pub fn set_mono_ui(on: bool, ctx: &egui::Context) {
+    MONO_UI.store(on, Ordering::Relaxed);
+    rebuild_families(ctx);
+}
+
+/// 依据界面字体选择与等宽字开关重排 Proportional 字体链
+fn rebuild_families(ctx: &egui::Context) {
+    let Some(base) = BASE_FONTS.get() else { return };
+    let mut defs = base.clone();
+    let prop = defs
+        .families
+        .entry(FontFamily::Proportional)
+        .or_default();
+    let choice = ui_font() as usize;
+    if choice > 0 {
+        let name = match choice {
+            1 => "msyh",
+            2 => "simsun",
+            _ => "simhei",
+        };
+        if defs.font_data.contains_key(name) {
+            prop.retain(|f| f != name);
+            prop.insert(0, name.to_string());
+        }
+    }
+    if mono_ui() && defs.font_data.contains_key("mono-ui") {
+        prop.retain(|f| f != "mono-ui");
+        prop.insert(0, "mono-ui".to_string());
+    }
+    ctx.set_fonts(defs);
+}
 static CODE_FONT: AtomicU8 = AtomicU8::new(0);
 static ALT_FONTS: OnceLock<Vec<String>> = OnceLock::new();
 
@@ -301,43 +354,9 @@ pub fn setup(ctx: &egui::Context) {
             .or_default()
             .insert(0, name.to_owned());
     }
-    // 可选代码字体：存在才注册，供外观面板切换
-    let mut loaded: Vec<String> = Vec::new();
-    #[cfg(target_os = "windows")]
-    {
-        let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:".to_string() + &String::from("\\").repeat(1) + "Windows");
-        let fdir = std::path::PathBuf::from(windir).join("Fonts");
-        for (f, fam) in [("consola.ttf", "Consolas"), ("CascadiaMono.ttf", "Cascadia Mono"), ("CascadiaCode.ttf", "Cascadia Code")] {
-            if let Ok(b) = std::fs::read(fdir.join(f)) {
-                fonts.font_data.insert(fam.to_string(), egui::FontData::from_owned(b));
-                fonts.families.entry(FontFamily::Name(fam.to_string().into())).or_default().push(fam.to_string());
-                loaded.push(fam.to_string());
-            }
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        for (p, fam) in [("/System/Library/Fonts/Menlo.ttc", "Menlo"), ("/System/Library/Fonts/SFNSMono.ttf", "SF Mono")] {
-            if let Ok(b) = std::fs::read(p) {
-                fonts.font_data.insert(fam.to_string(), egui::FontData::from_owned(b));
-                fonts.families.entry(FontFamily::Name(fam.to_string().into())).or_default().push(fam.to_string());
-                loaded.push(fam.to_string());
-            }
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        for (p, fam) in [("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "DejaVu Sans Mono")] {
-            if let Ok(b) = std::fs::read(p) {
-                fonts.font_data.insert(fam.to_string(), egui::FontData::from_owned(b));
-                fonts.families.entry(FontFamily::Name(fam.to_string().into())).or_default().push(fam.to_string());
-                loaded.push(fam.to_string());
-            }
-        }
-    }
-    let _ = ALT_FONTS.set(loaded);
-
-    if let Some((name, bytes, idx)) = cjk() {
+    // 中文回退字体：先注册并记录名字，后面所有命名字体族都要追加它，
+    // 否则 Cascadia Code / JetBrains Mono 等专属族里没有汉字字形，中文全部显示为方框
+    let cjk_name: Option<String> = cjk().and_then(|(name, bytes, idx)| {
         let mut fd = egui::FontData::from_owned(bytes);
         fd.index = idx;
         fonts.font_data.insert(name.to_owned(), fd);
@@ -351,9 +370,101 @@ pub fn setup(ctx: &egui::Context) {
             .entry(FontFamily::Monospace)
             .or_default()
             .push(name.to_owned());
+        Some(name.to_owned())
+    });
+    // 可选代码字体：存在才注册，供外观面板切换
+    let mut loaded: Vec<String> = Vec::new();
+    #[cfg(target_os = "windows")]
+    {
+        let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:".to_string() + &String::from("\\").repeat(1) + "Windows");
+        let fdir = std::path::PathBuf::from(windir).join("Fonts");
+        // JetBrains Mono：系统字体目录 + 当前用户字体目录（安装版常见位置）
+        let local = std::env::var("LOCALAPPDATA").map(std::path::PathBuf::from).ok();
+        let mut jb = None;
+        for dir in [Some(fdir.clone()), local] {
+            let Some(dir) = dir else { continue };
+            for f in ["JetBrainsMono-Regular.ttf", "JetBrainsMono.ttf", "JetBrainsMono[wght].ttf"] {
+                if let Ok(b) = std::fs::read(dir.join(f)) {
+                    jb = Some(b);
+                    break;
+                }
+            }
+            if jb.is_some() {
+                break;
+            }
+        }
+        if let Some(b) = jb {
+            fonts.font_data.insert("JetBrains Mono".to_string(), egui::FontData::from_owned(b));
+            let entry = fonts
+                .families
+                .entry(FontFamily::Name("JetBrains Mono".to_string().into()))
+                .or_default();
+            entry.push("JetBrains Mono".to_string());
+            if let Some(cn) = &cjk_name {
+                entry.push(cn.clone());
+            }
+            loaded.push("JetBrains Mono".to_string());
+        }
+        for (f, fam) in [("consola.ttf", "Consolas"), ("CascadiaMono.ttf", "Cascadia Mono"), ("CascadiaCode.ttf", "Cascadia Code")] {
+            if let Ok(b) = std::fs::read(fdir.join(f)) {
+                fonts.font_data.insert(fam.to_string(), egui::FontData::from_owned(b));
+                let entry = fonts
+                    .families
+                    .entry(FontFamily::Name(fam.to_string().into()))
+                    .or_default();
+                entry.push(fam.to_string());
+                if let Some(cn) = &cjk_name {
+                    entry.push(cn.clone());
+                }
+                loaded.push(fam.to_string());
+            }
+        }
+        // 界面字体候选：独立注册，供 rebuild_families 切换
+        for (f, fam) in [("msyh.ttc", "msyh"), ("simsun.ttc", "simsun"), ("simhei.ttf", "simhei")] {
+            if let Ok(b) = std::fs::read(fdir.join(f)) {
+                fonts.font_data.insert(fam.to_string(), egui::FontData::from_owned(b));
+            }
+        }
     }
-    ctx.set_fonts(fonts);
+    #[cfg(target_os = "macos")]
+    {
+        for (p, fam) in [("/System/Library/Fonts/Menlo.ttc", "Menlo"), ("/System/Library/Fonts/SFNSMono.ttf", "SF Mono")] {
+            if let Ok(b) = std::fs::read(p) {
+                fonts.font_data.insert(fam.to_string(), egui::FontData::from_owned(b));
+                let entry = fonts
+                    .families
+                    .entry(FontFamily::Name(fam.to_string().into()))
+                    .or_default();
+                entry.push(fam.to_string());
+                if let Some(cn) = &cjk_name {
+                    entry.push(cn.clone());
+                }
+                loaded.push(fam.to_string());
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        for (p, fam) in [("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "DejaVu Sans Mono")] {
+            if let Ok(b) = std::fs::read(p) {
+                fonts.font_data.insert(fam.to_string(), egui::FontData::from_owned(b));
+                let entry = fonts
+                    .families
+                    .entry(FontFamily::Name(fam.to_string().into()))
+                    .or_default();
+                entry.push(fam.to_string());
+                if let Some(cn) = &cjk_name {
+                    entry.push(cn.clone());
+                }
+                loaded.push(fam.to_string());
+            }
+        }
+    }
+    let _ = ALT_FONTS.set(loaded);
+
+    let _ = BASE_FONTS.set(fonts);
     ctx.options_mut(|o| o.warn_on_id_clash = false);
+    rebuild_families(ctx);
     apply(ctx);
 }
 

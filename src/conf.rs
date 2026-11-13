@@ -20,11 +20,22 @@ pub struct Appearance {
     pub code_ratio: f32,
     #[serde(default)]
     pub code_font: u8,
+    #[serde(default)]
+    pub ui_font: u8,
+    #[serde(default)]
+    pub mono_ui: bool,
 }
 
 impl Default for Appearance {
     fn default() -> Self {
-        Appearance { light: false, code_size: def_size(), code_ratio: def_ratio(), code_font: 0 }
+        Appearance {
+            light: false,
+            code_size: def_size(),
+            code_ratio: def_ratio(),
+            code_font: 0,
+            ui_font: 0,
+            mono_ui: false,
+        }
     }
 }
 

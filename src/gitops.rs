@@ -11,6 +11,7 @@ pub struct GitInfo {
     pub is_git: bool,
     pub branch: String,
     pub remote: String,
+    pub remote_url: String,
     pub ahead: usize,
     pub behind: usize,
     pub files: HashMap<String, String>,
@@ -147,6 +148,9 @@ pub fn status(root: &Path, force: bool) -> GitInfo {
     if let Some(r) = run(root, &["remote"], 3000) {
         info.remote = r.lines().next().unwrap_or("").trim().to_string();
     }
+    if let Some(u) = run(root, &["config", "--get", "remote.origin.url"], 3000) {
+        info.remote_url = u.trim().to_string();
+    }
 
     // 与上游的差距；没有 upstream 时静默为 0
     if let Some(o) = run(
@@ -163,6 +167,9 @@ pub fn status(root: &Path, force: bool) -> GitInfo {
 
     if let Some(r) = run(root, &["remote"], 3000) {
         info.remote = r.lines().next().unwrap_or("").trim().to_string();
+    }
+    if let Some(u) = run(root, &["config", "--get", "remote.origin.url"], 3000) {
+        info.remote_url = u.trim().to_string();
     }
 
     // 与上游的差距；没有 upstream 时静默为 0

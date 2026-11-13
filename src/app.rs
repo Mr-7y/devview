@@ -58,6 +58,9 @@ struct GalleyCache {
     rev: u64,
     w: f32,
     galley: Arc<egui::Galley>,
+    /// 窗口缩放防抖：目标宽度首次出现的时刻；None 表示上次为稳定重建
+    pending_w: f32,
+    pending_at: Option<Instant>,
 }
 
 pub struct App {
@@ -82,6 +85,14 @@ pub struct App {
     cur: Option<Cur>,
     cache: RefCell<Option<GalleyCache>>,
     rev: u64,
+    /// git 状态后台任务：结果通过 channel 回 UI 线程，避免 git 慢时冻结界面
+    git_job: Option<std::sync::mpsc::Receiver<gitops::GitInfo>>,
+    /// 在途期间又来了强制刷新请求
+    git_force_pending: bool,
+    /// 树行缓存：键为 (tree.rev, 过滤词)，避免每帧 flatten + 全行小写过滤
+    rows_cache: RefCell<(u64, String, Arc<Vec<tree::Row>>)>,
+    /// Markdown 编辑期间有未重建的 blocks（预览切换时一次性重建）
+    md_dirty: bool,
     wrap: bool,
     diff_mode: bool,
     scroll_y: f32,
@@ -131,6 +142,8 @@ impl App {
         let app_size = conf.appearance.code_size;
         let app_ratio = conf.appearance.code_ratio;
         let app_font = conf.appearance.code_font;
+        let app_ui_font = conf.appearance.ui_font;
+        let app_mono_ui = conf.appearance.mono_ui;
         let mut app = App {
             filter: String::new(),
             ctx: cc.egui_ctx.clone(),
@@ -144,7 +157,7 @@ impl App {
             conf,
             root: None,
             root_err: None,
-            tree: tree::Tree { nodes: Vec::new() },
+            tree: tree::Tree { nodes: Vec::new(), rev: 0 },
             git: Default::default(),
             dirty_dirs: HashSet::new(),
             git_at: Instant::now() - Duration::from_secs(60),
@@ -152,6 +165,10 @@ impl App {
             cur: None,
             cache: RefCell::new(None),
             rev: 1,
+            git_job: None,
+            git_force_pending: false,
+            rows_cache: RefCell::new((0, String::new(), Arc::new(Vec::new()))),
+            md_dirty: false,
             wrap: false,
             diff_mode: false,
             scroll_y: 0.0,
@@ -179,6 +196,8 @@ impl App {
         theme::set_code_size(app_size);
         theme::set_code_ratio(app_ratio);
         theme::set_code_font(app_font);
+        theme::set_ui_font(app_ui_font, &cc.egui_ctx);
+        theme::set_mono_ui(app_mono_ui, &cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
         app.load_project();
         if let Ok(rel) = std::env::var("AI_VIEW_OPEN") {
@@ -212,7 +231,7 @@ impl App {
                 self.refresh_git(true);
             }
             Err(e) => {
-                self.tree = tree::Tree { nodes: Vec::new() };
+                self.tree = tree::Tree { nodes: Vec::new(), rev: 0 };
                 self.root = None;
                 self.root_err = Some(e);
                 self.git = Default::default();
@@ -222,8 +241,39 @@ impl App {
     }
 
     fn refresh_git(&mut self, force: bool) {
-        let Some(root) = &self.root else { return };
-        self.git = gitops::status(root, force);
+        if force {
+            self.git_force_pending = true;
+        }
+        // 非阻塞查收在途结果
+        if let Some(rx) = self.git_job.take() {
+            match rx.try_recv() {
+                Ok(info) => self.apply_git(info),
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.git_job = Some(rx);
+                }
+                Err(_) => {}
+            }
+        }
+        if self.git_job.is_some() {
+            return;
+        }
+        let Some(root) = self.root.clone() else { return };
+        let due = self.git_force_pending || self.git_at.elapsed() >= Duration::from_secs(3);
+        if !due {
+            return;
+        }
+        let force = std::mem::take(&mut self.git_force_pending);
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.git_job = Some(rx);
+        // git 子进程在后台线程执行：慢仓库不再冻结 UI
+        std::thread::spawn(move || {
+            let info = gitops::status(&root, force);
+            let _ = tx.send(info);
+        });
+    }
+
+    fn apply_git(&mut self, info: gitops::GitInfo) {
+        self.git = info;
         self.git_at = Instant::now();
         self.dirty_dirs.clear();
         for f in self.git.files.keys() {
@@ -328,7 +378,8 @@ impl App {
                     gen_lines: n,
                     can_wrap,
                     is_md,
-                    preview: is_md,
+                    preview: is_md
+                        && std::env::var("AI_VIEW_SRC").as_deref() != Ok("1"),
                     dirty: false,
                     blocks,
                     is_img: false,
@@ -528,6 +579,8 @@ impl App {
             code_size: theme::code_size(),
             code_ratio: theme::code_ratio(),
             code_font: theme::code_font(),
+            ui_font: theme::ui_font(),
+            mono_ui: theme::mono_ui(),
         };
         let _ = conf::save(&self.conf);
     }
@@ -579,8 +632,6 @@ impl App {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                             }
                             ui.add_space(10.0);
-                            avatar(ui);
-                            ui.add_space(4.0);
                             let night = !theme::light();
                             if icon_theme(ui, night).clicked() {
                                 theme::toggle();
@@ -589,7 +640,7 @@ impl App {
                                 self.save_appearance();
                             }
                             ui.add_space(8.0);
-                            sync_chip(ui, self.git_at.elapsed(), self.git.is_git);
+                            sync_chip(ui, self.git.is_git);
                             ui.add_space(6.0);
                             if icon_panels2(ui, self.left_open && self.right_open)
                                 .on_hover_text("两侧栏一起收起 / 展开")
@@ -622,13 +673,7 @@ impl App {
             .get(self.conf.active)
             .map(|p| p.name.clone())
             .unwrap_or_else(|| "未打开项目".into());
-        let branch = if self.git.is_git && !self.git.branch.is_empty() {
-            self.git.branch.clone()
-        } else {
-            String::new()
-        };
-
-        let mut pick: Option<usize> = None;
+let mut pick: Option<usize> = None;
         egui::ComboBox::from_id_salt("proj")
             .width(150.0)
             .selected_text(RichText::new(cur_name).size(11.5))
@@ -658,9 +703,6 @@ impl App {
                 self.load_project();
             }
         }
-        if !branch.is_empty() {
-            ui.label(RichText::new(branch).size(10.0).color(theme::faint()).monospace());
-        }
     }
 
     fn gitbar(&mut self, ctx: &egui::Context) {
@@ -678,6 +720,14 @@ impl App {
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
+                    // 与顶栏 logo(24) + 品牌字(Ai-View) 及各处间距等宽的占位，
+                    // 让分支胶囊与上方项目选择器左缘对齐
+                    let brand_w = ui
+                        .painter()
+                        .layout_no_wrap("Ai-View".to_string(), FontId::proportional(14.5), theme::text())
+                        .size()
+                        .x;
+                    ui.allocate_exact_size(Vec2::new(40.0 + brand_w, 1.0), Sense::hover());
                     let branch = if self.git.branch.is_empty() {
                         "-".to_string()
                     } else {
@@ -1048,33 +1098,63 @@ impl App {
     fn remote_card(&mut self, ui: &mut egui::Ui) {
         let r = ui.max_rect();
         let card = egui::Rect::from_min_max(
-            egui::pos2(r.left() + 10.0, r.bottom() - 66.0),
+            egui::pos2(r.left() + 10.0, r.bottom() - 78.0),
             egui::pos2(r.right() - 10.0, r.bottom() - 8.0),
         );
         let remote = self.git.remote.clone();
+        let url = self.git.remote_url.clone();
         let branch = self.git.branch.clone();
         let p = ui.painter();
         p.rect(card, 9.0, theme::panel2(), Stroke::new(1.0, theme::line()));
+        // 第一行：origin 名 + 同步圆点
         p.text(
-            egui::pos2(card.left() + 12.0, card.top() + 17.0),
+            egui::pos2(card.left() + 12.0, card.top() + 16.0),
             Align2::LEFT_CENTER,
             if remote.is_empty() { "origin" } else { remote.as_str() },
             FontId::proportional(11.5),
             theme::text(),
         );
+        p.circle_filled(egui::pos2(card.right() - 14.0, card.top() + 16.0), 2.5, theme::jade());
+        // 第二行：远程地址（去掉协议与 .git 后缀，设计稿样式）
+        let mut shown = url;
+        for pre in ["https://", "http://", "git@", "ssh://git@"] {
+            if let Some(x) = shown.strip_prefix(pre) {
+                shown = x.to_string();
+            }
+        }
+        // scp 风格 git@host:path → host/path
+        if let Some(colon) = shown.find(':') {
+            if !shown[..colon].contains('/') {
+                shown.replace_range(colon..colon + 1, "/");
+            }
+        }
+        if shown.ends_with(".git") {
+            shown.truncate(shown.len() - 4);
+        }
+        if shown.is_empty() {
+            shown = "未配置远程".to_string();
+        }
         p.text(
-            egui::pos2(card.left() + 12.0, card.top() + 36.0),
+            egui::pos2(card.left() + 12.0, card.top() + 34.0),
             Align2::LEFT_CENTER,
-            format!("↑{}   ↓{}", self.git.ahead, self.git.behind),
+            shown,
             FontId::monospace(9.5),
             theme::faint(),
         );
+        // 第三行：本地分支 + 领先落后
         p.text(
             egui::pos2(card.left() + 12.0, card.top() + 52.0),
             Align2::LEFT_CENTER,
-            if branch.is_empty() { "-" } else { branch.as_str() },
+            if branch.is_empty() { "-".to_string() } else { branch.clone() },
             FontId::monospace(9.5),
             theme::brass(),
+        );
+        p.text(
+            egui::pos2(card.right() - 12.0, card.top() + 52.0),
+            Align2::RIGHT_CENTER,
+            format!("↑{} ↓{}", self.git.ahead, self.git.behind),
+            FontId::monospace(9.5),
+            theme::faint(),
         );
     }
 
@@ -1098,20 +1178,31 @@ impl App {
         }
 
         let q = self.filter.trim().to_lowercase();
-        let all = self.tree.flatten();
-        let rows: Vec<_> = if q.is_empty() {
-            all
-        } else {
-            all.into_iter()
-                .filter(|r| r.name.to_lowercase().contains(&q))
-                .collect()
+        let rows: Arc<Vec<tree::Row>> = {
+            let mut c = self.rows_cache.borrow_mut();
+            if c.0 == self.tree.rev && c.1 == q {
+                Arc::clone(&c.2)
+            } else {
+                let all = self.tree.flatten();
+                let v = if q.is_empty() {
+                    all
+                } else {
+                    all.into_iter()
+                        .filter(|r| r.name.to_lowercase().contains(&q))
+                        .collect()
+                };
+                let a = Arc::new(v);
+                *c = (self.tree.rev, q, Arc::clone(&a));
+                a
+            }
         };
+        let rows_len = rows.len();
         let h = ui.available_height();
         let mut clicked: Option<String> = None;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .max_height(h)
-            .show_rows(ui, ROW_H, rows.len(), |ui, range| {
+            .show_rows(ui, ROW_H, rows_len, |ui, range| {
                 for i in range {
                     let row = &rows[i];
                     let full_w = ui.available_width();
@@ -1454,6 +1545,34 @@ impl App {
         });
 
         ui.add_space(18.0);
+        row_label(ui, "界面字体", "");
+        ui.add_space(6.0);
+        {
+            let names = theme::ui_font_names();
+            let cur = theme::ui_font() as usize;
+            let sel = names.get(cur).copied().unwrap_or(names[0]);
+            let mut pick: Option<u8> = None;
+            egui::ComboBox::from_id_salt("ui-font")
+                .width(w - 14.0)
+                .selected_text(RichText::new(sel).size(11.0).color(theme::text()))
+                .show_ui(ui, |ui| {
+                    for (i, n) in names.iter().enumerate() {
+                        if ui
+                            .selectable_label(cur == i, RichText::new(*n).size(11.0))
+                            .clicked()
+                        {
+                            pick = Some(i as u8);
+                        }
+                    }
+                });
+            if let Some(v) = pick {
+                theme::set_ui_font(v, ui.ctx());
+                self.rev += 1;
+                self.save_appearance();
+            }
+        }
+
+        ui.add_space(18.0);
         row_label(ui, "代码字体", "");
         ui.add_space(6.0);
         let fonts = theme::alt_fonts().to_vec();
@@ -1534,6 +1653,21 @@ impl App {
             }
         });
 
+        ui.add_space(16.0);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            row_label(ui, "等宽字", "");
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(14.0);
+                let on = theme::mono_ui();
+                if brass_toggle(ui, on).clicked() {
+                    theme::set_mono_ui(!on, ui.ctx());
+                    self.rev += 1;
+                    self.save_appearance();
+                }
+            });
+        });
+
         ui.add_space(18.0);
         ui.horizontal(|ui| {
             ui.add_space(14.0);
@@ -1545,6 +1679,12 @@ impl App {
                 .show(ui, |ui| {
                     ui.set_width((w - 34.0).max(70.0));
                     ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new("全字预览")
+                            .size(9.0)
+                            .color(theme::faint()),
+                    );
+                    ui.add_space(4.0);
                     ui.label(
                         RichText::new("let theme = Night;")
                             .size(theme::code_size())
@@ -1570,15 +1710,26 @@ impl App {
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.add_space(14.0);
-            if ghost(ui, "恢复默认").clicked() {
-                theme::set_code_size(15.0);
-                theme::set_code_ratio(1.9);
+            if ghost(ui, "↺ 恢复默认").clicked() {
+                theme::set_code_size(17.0);
+                theme::set_code_ratio(1.65);
                 theme::set_code_font(0);
+                theme::set_ui_font(0, ui.ctx());
+                theme::set_mono_ui(false, ui.ctx());
                 theme::set_light(false);
                 theme::apply(ui.ctx());
                 self.rev += 1;
                 self.save_appearance();
             }
+        });
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.label(
+                RichText::new("外观配置自动保存")
+                    .size(9.0)
+                    .color(theme::faint()),
+            );
         });
     }
     fn right_changes(&mut self, ui: &mut egui::Ui) {
@@ -1681,6 +1832,10 @@ impl App {
                         if let Some(c) = self.cur.as_mut() {
                             c.preview = !preview;
                         }
+                        if self.md_dirty {
+                            self.rebuild();
+                            self.md_dirty = false;
+                        }
                         self.rev += 1;
                     }
                     if ghost(ui, "保存").clicked() {
@@ -1696,23 +1851,6 @@ impl App {
                 ui.label(RichText::new("没有打开文件").size(11.5).color(theme::faint()));
             });
         }
-        ui.add_space(14.0);
-        ui.horizontal(|ui| {
-            ui.add_space(14.0);
-            ui.vertical(|ui| {
-                ui.label(
-                    RichText::new(format!("Ai-View {}", env!("CARGO_PKG_VERSION")))
-                        .size(10.5)
-                        .color(theme::muted()),
-                );
-                ui.label(
-                    RichText::new("只读浏览 · Markdown 可编辑")
-                        .size(9.5)
-                        .color(theme::faint()),
-                );
-                ui.label(RichText::new("作者 Mr.7y").size(9.5).color(theme::faint()));
-            });
-        });
     }
 
     fn center(&mut self, ctx: &egui::Context) {
@@ -1782,13 +1920,10 @@ impl App {
                 Stroke::new(1.5, theme::brass()),
             );
             let ix = rect.left() + 10.0;
-            ui.painter().rect_stroke(
-                egui::Rect::from_min_size(
-                    egui::pos2(ix, rect.center().y - 5.0),
-                    Vec2::new(9.0, 11.0),
-                ),
-                1.5,
-                Stroke::new(1.0, theme::faint()),
+            file_icon(
+                ui.painter(),
+                egui::pos2(ix + 4.5, rect.center().y),
+                &name,
             );
             ui.painter().galley(
                 egui::pos2(ix + 15.0, rect.center().y - galley.size().y / 2.0),
@@ -2152,19 +2287,20 @@ impl App {
 
                 if let Some(buf) = edit_buf.as_mut() {
                     // 内容级缓存：内容不变时零 tokenize，输入大文件不卡
-                    let edit_cache: RefCell<(String, Option<Arc<egui::Galley>>)> =
-                        RefCell::new((String::new(), None));
+                    let edit_cache: RefCell<(String, f32, Option<Arc<egui::Galley>>)> =
+                        RefCell::new((String::new(), 0.0, None));
                     let mut layouter =
                         |ui: &egui::Ui, content: &str, wrap_width: f32| -> Arc<egui::Galley> {
                             let w = if wrap { wrap_width.max(80.0) } else { 0.0 };
                             let mut c = edit_cache.borrow_mut();
-                            if c.0 != content {
-                                let ls = syntax::tokenize(content, lang);
-                                let job = syntax::build_job(&ls, wrap, w);
-                                c.1 = Some(ui.fonts(|f| f.layout_job(job)));
+                            if c.0 != content || (c.1 - w).abs() > 0.5 {
+                                // 编辑态轻量排版：不逐键 tokenize，杜绝大文件打字卡顿
+                                let job = syntax::plain_job(content, wrap, w);
+                                c.2 = Some(ui.fonts(|f| f.layout_job(job)));
                                 c.0 = content.to_string();
+                                c.1 = w;
                             }
-                            c.1.clone().unwrap()
+                            c.2.clone().unwrap()
                         };
                     let out = area.show(ui, |ui| {
                         ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -2212,10 +2348,33 @@ impl App {
                     changed = out.inner.changed();
                     new_scroll = out.state.offset.y;
                 } else {
+                    const RESIZE_DEBOUNCE: Duration = Duration::from_millis(250);
                     let mut layouter = |ui: &egui::Ui, _buf: &str, wrap_width: f32| {
                         let w = if wrap { wrap_width } else { 0.0 };
                         if let Some(c) = cache.borrow().as_ref() {
                             if c.rev == rev && (c.w - w).abs() < 0.5 {
+                                return c.galley.clone();
+                            }
+                        }
+                        // 宽度仍在变动（拖拽窗口边框）：沿用旧 galley，宽度稳定 250ms 后才整篇重排，
+                        // 否则大文件每帧全量排版会造成明显卡顿
+                        let still_resizing = {
+                            let mut cb = cache.borrow_mut();
+                            match cb.as_mut() {
+                                Some(c) if c.rev == rev => {
+                                    if c.pending_w != w {
+                                        c.pending_w = w;
+                                        c.pending_at = Some(Instant::now());
+                                    }
+                                    c.pending_at
+                                        .map(|t| Instant::now().duration_since(t) < RESIZE_DEBOUNCE)
+                                        .unwrap_or(true)
+                                }
+                                _ => false,
+                            }
+                        };
+                        if still_resizing {
+                            if let Some(c) = cache.borrow().as_ref() {
                                 return c.galley.clone();
                             }
                         }
@@ -2230,6 +2389,8 @@ impl App {
                             rev,
                             w,
                             galley: g.clone(),
+                            pending_w: w,
+                            pending_at: None,
                         });
                         g
                     };
@@ -2296,7 +2457,9 @@ impl App {
                 cur.dirty = true;
                 cur.size = cur.text.len() as u64;
             }
-            self.rebuild();
+            // 编辑期间只改文本：逐键重 tokenize / 重解析 md / 递增 rev 会每键全篇排版且
+            // 重置 ScrollArea 状态，是编辑卡顿的根源；切到预览时一次性重建
+            self.md_dirty = true;
         }
     }
 
@@ -2335,14 +2498,6 @@ impl App {
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new("Mr.7y").size(9.5).color(theme::brass()).monospace());
-                        ui.add_space(8.0);
-                        ui.label(
-                            RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
-                                .size(9.5)
-                                .color(theme::faint())
-                                .monospace(),
-                        );
                         if let Some(c) = self.cur.as_ref() {
                             ui.add_space(8.0);
                             ui.label(
@@ -2742,9 +2897,8 @@ impl eframe::App for App {
         if !toast_left.is_zero() {
             ctx.request_repaint_after(toast_left);
         }
-        if ctx.input(|i| i.focused) && self.git_at.elapsed() > Duration::from_secs(5) {
-            self.refresh_git(false);
-        }
+        // git 结果查收与刷新都走这里；函数内部自带节流，每帧调用代价极小
+        self.refresh_git(false);
         if self.git.is_git {
             let left = Duration::from_secs(5).saturating_sub(self.git_at.elapsed());
             ctx.request_repaint_after(left.max(Duration::from_millis(500)));
@@ -2898,18 +3052,6 @@ fn icon_btn(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
     ui.add(b)
 }
 
-fn avatar(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(26.0, 26.0), Sense::hover());
-    ui.painter().circle_filled(rect.center(), 13.0, theme::brass_bg());
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        "7y",
-        FontId::proportional(10.0),
-        theme::brass(),
-    );
-}
-
 fn pill_btn(ui: &mut egui::Ui, icon: &str, text: &str) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         format!("{}  {}", icon, text),
@@ -2945,16 +3087,33 @@ fn graph(ui: &mut egui::Ui, ahead: usize, behind: usize) -> egui::Response {
         ],
         Stroke::new(1.4, theme::line2()),
     );
-    let n = (ahead + behind + 4).min(7);
+    let n = 5usize;
+    let seg = (w - 12.0) / (n as f32 + 1.0);
     for i in 0..n {
-        let t = (i as f32 + 1.0) / (n as f32 + 1.0);
-        let x = rect.left() + 6.0 + t * (w - 12.0);
-        let c = if behind > 0 && i + 1 > n - behind {
+        let x = rect.left() + 6.0 + (i as f32 + 1.0) * seg;
+        let c = if behind > 0 && i >= n.saturating_sub(behind.min(n)) {
             theme::jade()
         } else {
             theme::brass()
         };
         p.circle_filled(egui::pos2(x, y), 3.0, c);
+    }
+    // 本地领先：中段两点间拱起一条山形曲线，顶点 jade（设计稿样式）
+    if ahead > 0 {
+        let apex = (n / 2).max(1) as f32;
+        let x0 = rect.left() + 6.0 + apex * seg;
+        let x1 = rect.left() + 6.0 + (apex + 2.0) * seg;
+        let xm = (x0 + x1) / 2.0;
+        let top = y - 10.0;
+        let pts = vec![
+            egui::pos2(x0, y),
+            egui::pos2((x0 + xm) / 2.0, y - 4.5),
+            egui::pos2(xm, top),
+            egui::pos2((xm + x1) / 2.0, y - 4.5),
+            egui::pos2(x1, y),
+        ];
+        p.add(egui::Shape::line(pts, Stroke::new(1.4, theme::jade())));
+        p.circle_filled(egui::pos2(xm, top), 3.0, theme::jade());
     }
     let c = egui::pos2(rect.right() - 6.0, y);
     p.circle(c, 4.0, theme::bg2(), Stroke::new(1.4, theme::brass()));
@@ -3128,23 +3287,17 @@ fn fuzzy_files(files: &[String], q: &str, cap: usize) -> Vec<(String, i32)> {
     out
 }
 
-fn sync_chip(ui: &mut egui::Ui, ago: std::time::Duration, is_git: bool) {
+fn sync_chip(ui: &mut egui::Ui, is_git: bool) {
     let (text, color) = if is_git {
-        let secs = ago.as_secs();
-        let t = if secs < 60 {
-            format!("已同步  {} 秒前", secs)
-        } else {
-            format!("已同步  {} 分钟前", secs / 60)
-        };
-        (t, theme::jade())
+        ("已同步".to_string(), theme::jade())
     } else {
         ("未连接".to_string(), theme::faint())
     };
     let galley =
         ui.painter()
             .layout_no_wrap(text, FontId::proportional(10.0), theme::muted());
-    let pad = Vec2::new(10.0, 5.0);
-    let (rect, _) = ui.allocate_exact_size(galley.size() + pad * 2.0, Sense::hover());
+    // 固定宽度，状态切换不推挤右侧按钮
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(70.0, galley.size().y + 10.0), Sense::hover());
     ui.painter().rect(
         rect,
         999.0,
@@ -3152,9 +3305,9 @@ fn sync_chip(ui: &mut egui::Ui, ago: std::time::Duration, is_git: bool) {
         Stroke::new(1.0, theme::line()),
     );
     ui.painter()
-        .circle_filled(egui::pos2(rect.left() + pad.x + 3.0, rect.center().y), 2.5, color);
+        .circle_filled(egui::pos2(rect.left() + 13.0, rect.center().y), 2.5, color);
     ui.painter().galley(
-        egui::pos2(rect.left() + pad.x + 10.0, rect.center().y - galley.size().y / 2.0),
+        egui::pos2(rect.left() + 20.0, rect.center().y - galley.size().y / 2.0),
         galley,
         theme::muted(),
     );
@@ -3338,6 +3491,75 @@ fn icon_panels2(ui: &mut egui::Ui, on: bool) -> egui::Response {
         1.5,
         col,
     );
+    resp
+}
+
+/// 按文件类型绘制的 tab 小图标（设计稿：代码=框、md=文档折角、图片=山形图）。
+fn file_icon(p: &egui::Painter, c: egui::Pos2, name: &str) {
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+    let st = Stroke::new(1.0, theme::faint());
+    let b = egui::Rect::from_center_size(c, Vec2::new(9.0, 11.0));
+    match ext.as_str() {
+        "md" => {
+            p.add(egui::Shape::convex_polygon(
+                vec![
+                    b.left_top(),
+                    egui::pos2(b.right() - 3.0, b.top()),
+                    egui::pos2(b.right(), b.top() + 3.0),
+                    b.right_bottom(),
+                    b.left_bottom(),
+                ],
+                Color32::TRANSPARENT,
+                st,
+            ));
+            p.line_segment(
+                [egui::pos2(b.left() + 2.0, b.top() + 4.5), egui::pos2(b.right() - 3.5, b.top() + 4.5)],
+                st,
+            );
+            p.line_segment(
+                [egui::pos2(b.left() + 2.0, b.top() + 7.0), egui::pos2(b.right() - 2.0, b.top() + 7.0)],
+                st,
+            );
+        }
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico" => {
+            p.rect_stroke(b, 1.5, st);
+            p.circle_filled(egui::pos2(b.left() + 3.0, b.top() + 3.5), 1.2, theme::brass());
+            p.add(egui::Shape::line(
+                vec![
+                    egui::pos2(b.left() + 1.5, b.bottom() - 2.5),
+                    egui::pos2(b.left() + 4.0, b.top() + 5.5),
+                    egui::pos2(b.center().x, b.bottom() - 4.0),
+                    egui::pos2(b.right() - 1.5, b.bottom() - 2.5),
+                ],
+                st,
+            ));
+        }
+        _ => {
+            p.rect_stroke(b, 1.5, st);
+            p.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(b.left() + 1.5, b.top() + 1.5),
+                    Vec2::new(1.6, b.height() - 3.0),
+                ),
+                0.5,
+                theme::brass(),
+            );
+        }
+    }
+}
+
+/// 设计稿风格的开关：胶囊轨道 + 滑块圆点，选中态黄铜色。
+fn brass_toggle(ui: &mut egui::Ui, on: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(40.0, 20.0), Sense::click());
+    let p = ui.painter();
+    let bg = if on { theme::brass() } else { theme::line2() };
+    p.rect_filled(rect, 10.0, bg);
+    let cx = if on {
+        rect.right() - 10.5
+    } else {
+        rect.left() + 10.5
+    };
+    p.circle_filled(egui::pos2(cx, rect.center().y), 7.5, theme::raise());
     resp
 }
 
